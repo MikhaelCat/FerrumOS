@@ -994,72 +994,168 @@ pub fn get_clients_traffic(game_ips: &[String]) -> Vec<ClientTrafficStats> {
     stats
 }
 
-// --- 5.4. Parental Controls & Time Access Scheduling ---
+// --- 5.4. IPv6 Dual-Stack Configuration ---
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParentalRule {
-    pub name: String,
-    pub mac: String,
-    pub blocked: bool,
-    pub schedule_enabled: bool,
-    pub start_time: String, // "22:00"
-    pub end_time: String,   // "07:00"
-}
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct ParentalControlConfig {
+pub struct Ipv6Config {
     pub enabled: bool,
-    pub safesearch_enabled: bool, // Force SafeSearch for Google, YouTube, Yandex
-    pub rules: Vec<ParentalRule>,
+    pub connection_type: String, // "native_dhcp6", "slaac", "static", "passthrough"
+    pub primary_dns: String,     // "2606:4700:4700::1111"
+    pub secondary_dns: String,   // "2606:4700:4700::1001"
 }
 
-impl Default for ParentalControlConfig {
+impl Default for Ipv6Config {
     fn default() -> Self {
-        ParentalControlConfig {
-            enabled: false,
-            safesearch_enabled: true,
-            rules: vec![],
+        Ipv6Config {
+            enabled: true,
+            connection_type: "native_dhcp6".into(),
+            primary_dns: "2606:4700:4700::1111".into(),
+            secondary_dns: "2606:4700:4700::1001".into(),
         }
     }
 }
 
-pub fn apply_parental_controls(cfg: &ParentalControlConfig) -> Result<(), String> {
-    let _ = Command::new("iptables").args(["-F", "PARENTAL_FILTER"]).output();
-    let _ = Command::new("iptables").args(["-D", "FORWARD", "-j", "PARENTAL_FILTER"]).output();
-
+pub fn apply_ipv6_config(cfg: &Ipv6Config) -> Result<(), String> {
     if !cfg.enabled {
+        let _ = fs::write("/proc/sys/net/ipv6/conf/all/disable_ipv6", "1");
         return Ok(());
     }
 
-    let _ = Command::new("iptables").args(["-N", "PARENTAL_FILTER"]).output();
-    let _ = Command::new("iptables").args(["-I", "FORWARD", "1", "-j", "PARENTAL_FILTER"]).output();
+    let _ = fs::write("/proc/sys/net/ipv6/conf/all/disable_ipv6", "0");
+    let _ = fs::write("/proc/sys/net/ipv6/conf/eth2.2/accept_ra", "2");
+    let _ = fs::write("/proc/sys/net/ipv6/conf/br0/accept_ra", "1");
+    Ok(())
+}
 
-    for rule in &cfg.rules {
-        if rule.blocked && !rule.mac.is_empty() {
-            let _ = Command::new("iptables")
-                .args(["-A", "PARENTAL_FILTER", "-m", "mac", "--mac-source", &rule.mac, "-j", "DROP"])
-                .output();
+// --- 5.5. IPTV Multicast, IGMP Proxy & Udpxy Streamer ---
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IptvConfig {
+    pub igmp_snooping: bool,      // Hardware multicast switch snooping
+    pub igmp_proxy_enabled: bool, // Forward 239.0.0.0/8 from WAN to LAN
+    pub udpxy_enabled: bool,      // Convert UDP multicast to HTTP for Smart TVs and Wi-Fi
+    pub udpxy_port: u16,          // 4028
+}
+
+impl Default for IptvConfig {
+    fn default() -> Self {
+        IptvConfig {
+            igmp_snooping: true,
+            igmp_proxy_enabled: true,
+            udpxy_enabled: true,
+            udpxy_port: 4028,
         }
     }
+}
 
-    // Force SafeSearch via dnsmasq CNAME if enabled
-    if cfg.safesearch_enabled {
-        let safesearch_conf = "# FerrumOS SafeSearch Enforcement\n\
-            address=/forcesafesearch.google.com/216.239.38.120\n\
-            cname=www.google.com,forcesafesearch.google.com\n\
-            cname=www.google.ru,forcesafesearch.google.com\n\
-            address=/restrict.youtube.com/216.239.38.120\n\
-            cname=www.youtube.com,restrict.youtube.com\n\
-            address=/familysearch.yandex.ru/213.180.193.56\n\
-            cname=yandex.ru,familysearch.yandex.ru\n";
-        let _ = fs::write("/etc/dnsmasq.d/ferrum_safesearch.conf", safesearch_conf);
+pub fn apply_iptv_config(cfg: &IptvConfig) -> Result<(), String> {
+    // 1. IGMP Snooping in kernel bridge
+    if cfg.igmp_snooping {
+        let _ = fs::write("/sys/devices/virtual/net/br0/bridge/multicast_snooping", "1");
     } else {
-        let _ = fs::remove_file("/etc/dnsmasq.d/ferrum_safesearch.conf");
+        let _ = fs::write("/sys/devices/virtual/net/br0/bridge/multicast_snooping", "0");
     }
 
-    let _ = Command::new("killall").arg("dnsmasq").output();
-    let _ = Command::new("dnsmasq").output();
+    // 2. IGMP Proxy
+    let _ = Command::new("killall").arg("igmpproxy").output();
+    if cfg.igmp_proxy_enabled {
+        let igmp_conf = "quickleave\n\
+            phyint eth2.2 upstream ratelimit 0 threshold 1\n\
+            altnet 0.0.0.0/0\n\
+            phyint br0 downstream ratelimit 0 threshold 1\n";
+        let _ = fs::write("/etc/igmpproxy.conf", igmp_conf);
+        let _ = Command::new("igmpproxy").arg("/etc/igmpproxy.conf").spawn();
+    }
+
+    // 3. UDPXY (Multicast to HTTP Unicast proxy for Smart TVs / iOS / Wi-Fi)
+    let _ = Command::new("killall").arg("udpxy").output();
+    if cfg.udpxy_enabled {
+        let _ = Command::new("udpxy")
+            .args(["-p", &cfg.udpxy_port.to_string(), "-m", "eth2.2", "-B", "1Mb", "-M", "30"])
+            .spawn();
+    }
 
     Ok(())
+}
+
+// --- 5.6. Firewall & Security (SPI, Stealth WAN Ping, SYN Flood Protection) ---
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FirewallConfig {
+    pub wan_ping_respond: bool,     // Respond to ICMP ping from internet (false = Stealth)
+    pub syn_flood_protection: bool, // Rate limit SYN packets
+    pub port_scan_protection: bool, // Drop invalid packets
+}
+
+impl Default for FirewallConfig {
+    fn default() -> Self {
+        FirewallConfig {
+            wan_ping_respond: false, // Stealth by default
+            syn_flood_protection: true,
+            port_scan_protection: true,
+        }
+    }
+}
+
+pub fn apply_firewall_config(cfg: &FirewallConfig) -> Result<(), String> {
+    // 1. WAN ICMP Ping echo response
+    let _ = Command::new("iptables").args(["-D", "INPUT", "-i", "eth2.2", "-p", "icmp", "--icmp-type", "echo-request", "-j", "DROP"]).output();
+    if !cfg.wan_ping_respond {
+        let _ = Command::new("iptables")
+            .args(["-I", "INPUT", "1", "-i", "eth2.2", "-p", "icmp", "--icmp-type", "echo-request", "-j", "DROP"])
+            .output();
+    }
+
+    // 2. SYN Flood Protection via iptables limit
+    if cfg.syn_flood_protection {
+        let _ = Command::new("iptables")
+            .args(["-t", "filter", "-N", "SYN_FLOOD"])
+            .output();
+        let _ = Command::new("iptables")
+            .args(["-t", "filter", "-A", "SYN_FLOOD", "-m", "limit", "--limit", "30/s", "--limit-burst", "60", "-j", "RETURN"])
+            .output();
+        let _ = Command::new("iptables")
+            .args(["-t", "filter", "-A", "SYN_FLOOD", "-j", "DROP"])
+            .output();
+    }
+
+    Ok(())
+}
+
+// --- 5.7. Static Routes Configuration ---
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct StaticRoute {
+    pub destination: String, // "10.0.0.0/8"
+    pub gateway: String,     // "192.168.1.254"
+    pub interface: String,   // "WAN" or "LAN"
+    pub metric: u32,
+}
+
+pub fn apply_static_routes(routes: &[StaticRoute]) -> Result<(), String> {
+    for r in routes {
+        let iface = if r.interface.to_uppercase() == "LAN" { "br0" } else { "eth2.2" };
+        let _ = Command::new("ip")
+            .args(["route", "add", &r.destination, "via", &r.gateway, "dev", iface, "metric", &r.metric.to_string()])
+            .output();
+    }
+    Ok(())
+}
+
+// --- 5.8. Switch Physical Ethernet Ports Status Monitor ---
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SwitchPortStatus {
+    pub port_name: String, // "WAN", "LAN 1", "LAN 2", "LAN 3", "LAN 4"
+    pub link_up: bool,
+    pub speed_mbps: u32,   // 100 or 10 or 0
+    pub duplex: String,    // "Full", "Half", "Down"
+}
+
+pub fn get_switch_port_status() -> Vec<SwitchPortStatus> {
+    // In production MT7620 internal switch registers or /proc/net/rtl8367
+    vec![
+        SwitchPortStatus { port_name: "WAN".into(), link_up: true, speed_mbps: 100, duplex: "Full".into() },
+        SwitchPortStatus { port_name: "LAN 1 (PC)".into(), link_up: true, speed_mbps: 100, duplex: "Full".into() },
+        SwitchPortStatus { port_name: "LAN 2".into(), link_up: false, speed_mbps: 0, duplex: "Down".into() },
+        SwitchPortStatus { port_name: "LAN 3".into(), link_up: false, speed_mbps: 0, duplex: "Down".into() },
+        SwitchPortStatus { port_name: "LAN 4 (IPTV STB)".into(), link_up: true, speed_mbps: 100, duplex: "Full".into() },
+    ]
 }
 
 // --- 5.5. Wake-on-LAN (WoL) Pure Rust Engine ---

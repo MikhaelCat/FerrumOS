@@ -3,7 +3,10 @@ use crate::network::{
     apply_wifi_config, apply_dns_config, apply_lan_config, apply_wan_config, get_dhcp_leases,
     scan_wifi_networks, analyze_channel_congestion, trigger_auto_channel_selection,
     SqmQosConfig, apply_sqm_qos, get_clients_traffic,
-    ParentalControlConfig, apply_parental_controls,
+    Ipv6Config, apply_ipv6_config,
+    IptvConfig, apply_iptv_config,
+    FirewallConfig, apply_firewall_config,
+    StaticRoute, apply_static_routes, get_switch_port_status,
     send_wake_on_lan, PingWatchdogConfig, apply_watchdog_config,
     DdnsConfig, apply_ddns_config, DiagnosticReq, run_diagnostic,
     WifiNeighborNetwork, ChannelCongestion
@@ -28,7 +31,10 @@ pub struct AppState {
     pub lan_config: Arc<Mutex<LanDhcpConfig>>,
     pub wan_config: Arc<Mutex<WanConfig>>,
     pub qos_config: Arc<Mutex<SqmQosConfig>>,
-    pub parental_config: Arc<Mutex<ParentalControlConfig>>,
+    pub ipv6_config: Arc<Mutex<Ipv6Config>>,
+    pub iptv_config: Arc<Mutex<IptvConfig>>,
+    pub firewall_config: Arc<Mutex<FirewallConfig>>,
+    pub routes_config: Arc<Mutex<Vec<StaticRoute>>>,
     pub watchdog_config: Arc<Mutex<PingWatchdogConfig>>,
     pub ddns_config: Arc<Mutex<DdnsConfig>>,
 }
@@ -60,9 +66,24 @@ impl AppState {
             .and_then(|s| serde_json::from_str::<SqmQosConfig>(&s).ok())
             .unwrap_or_default();
 
-        let parental_cfg = std::fs::read_to_string("/etc/storage/parental_config.json")
+        let ipv6_cfg = std::fs::read_to_string("/etc/storage/ipv6_config.json")
             .ok()
-            .and_then(|s| serde_json::from_str::<ParentalControlConfig>(&s).ok())
+            .and_then(|s| serde_json::from_str::<Ipv6Config>(&s).ok())
+            .unwrap_or_default();
+
+        let iptv_cfg = std::fs::read_to_string("/etc/storage/iptv_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<IptvConfig>(&s).ok())
+            .unwrap_or_default();
+
+        let firewall_cfg = std::fs::read_to_string("/etc/storage/firewall_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<FirewallConfig>(&s).ok())
+            .unwrap_or_default();
+
+        let routes_cfg = std::fs::read_to_string("/etc/storage/routes_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<Vec<StaticRoute>>(&s).ok())
             .unwrap_or_default();
 
         let watchdog_cfg = std::fs::read_to_string("/etc/storage/watchdog_config.json")
@@ -84,7 +105,10 @@ impl AppState {
             lan_config: Arc::new(Mutex::new(lan_cfg)),
             wan_config: Arc::new(Mutex::new(wan_cfg)),
             qos_config: Arc::new(Mutex::new(qos_cfg)),
-            parental_config: Arc::new(Mutex::new(parental_cfg)),
+            ipv6_config: Arc::new(Mutex::new(ipv6_cfg)),
+            iptv_config: Arc::new(Mutex::new(iptv_cfg)),
+            firewall_config: Arc::new(Mutex::new(firewall_cfg)),
+            routes_config: Arc::new(Mutex::new(routes_cfg)),
             watchdog_config: Arc::new(Mutex::new(watchdog_cfg)),
             ddns_config: Arc::new(Mutex::new(ddns_cfg)),
         }
@@ -401,36 +425,114 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             respond_json(request, &stats, cors_header, content_type_json);
         }
 
-        // REST API: Parental Controls & Scheduling
-        (Method::Get, "/api/v1/parental/config") => {
-            let parental = state.parental_config.lock().unwrap().clone();
-            respond_json(request, &parental, cors_header, content_type_json);
+        // REST API: IPv6 Dual-Stack
+        (Method::Get, "/api/v1/ipv6/config") => {
+            let ipv6 = state.ipv6_config.lock().unwrap().clone();
+            respond_json(request, &ipv6, cors_header, content_type_json);
         }
-        (Method::Post, "/api/v1/parental/config") => {
+        (Method::Post, "/api/v1/ipv6/config") => {
             let mut body = String::new();
             let _ = request.as_reader().read_to_string(&mut body);
-            if let Ok(new_cfg) = serde_json::from_str::<ParentalControlConfig>(&body) {
-                *state.parental_config.lock().unwrap() = new_cfg.clone();
-                let _ = apply_parental_controls(&new_cfg);
+            if let Ok(new_cfg) = serde_json::from_str::<Ipv6Config>(&body) {
+                *state.ipv6_config.lock().unwrap() = new_cfg.clone();
+                let _ = apply_ipv6_config(&new_cfg);
 
                 if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
                     let _ = std::fs::create_dir_all("/etc/storage");
-                    let _ = std::fs::write("/etc/storage/parental_config.json", json_str);
+                    let _ = std::fs::write("/etc/storage/ipv6_config.json", json_str);
                     let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
                 }
 
-                let resp = GenericResp {
-                    success: true,
-                    message: "Правила родительского контроля сохранены и активны".into(),
-                };
+                let resp = GenericResp { success: true, message: "Настройки IPv6 сохранены и применены".into() };
                 respond_json(request, &resp, cors_header, content_type_json);
             } else {
-                let resp = GenericResp {
-                    success: false,
-                    message: "Некорректный JSON для родительского контроля".into(),
-                };
+                let resp = GenericResp { success: false, message: "Некорректный JSON IPv6".into() };
                 respond_json(request, &resp, cors_header, content_type_json);
             }
+        }
+
+        // REST API: IPTV Multicast & Udpxy
+        (Method::Get, "/api/v1/iptv/config") => {
+            let iptv = state.iptv_config.lock().unwrap().clone();
+            respond_json(request, &iptv, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/iptv/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<IptvConfig>(&body) {
+                *state.iptv_config.lock().unwrap() = new_cfg.clone();
+                let _ = apply_iptv_config(&new_cfg);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/iptv_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
+                let resp = GenericResp { success: true, message: "Настройки IPTV и Udpxy применены".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp { success: false, message: "Некорректный JSON IPTV".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: Firewall & SPI Security
+        (Method::Get, "/api/v1/firewall/config") => {
+            let fw = state.firewall_config.lock().unwrap().clone();
+            respond_json(request, &fw, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/firewall/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<FirewallConfig>(&body) {
+                *state.firewall_config.lock().unwrap() = new_cfg.clone();
+                let _ = apply_firewall_config(&new_cfg);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/firewall_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
+                let resp = GenericResp { success: true, message: "Правила Firewall успешно обновлены".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp { success: false, message: "Некорректный JSON Firewall".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: Static Routing Table
+        (Method::Get, "/api/v1/routes/config") => {
+            let routes = state.routes_config.lock().unwrap().clone();
+            respond_json(request, &routes, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/routes/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_routes) = serde_json::from_str::<Vec<StaticRoute>>(&body) {
+                *state.routes_config.lock().unwrap() = new_routes.clone();
+                let _ = apply_static_routes(&new_routes);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_routes) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/routes_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
+                let resp = GenericResp { success: true, message: "Статические маршруты применены".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp { success: false, message: "Некорректный JSON маршрутов".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: Switch Physical Ethernet Ports Status
+        (Method::Get, "/api/v1/switch/ports") => {
+            let ports = get_switch_port_status();
+            respond_json(request, &ports, cors_header, content_type_json);
         }
 
         // REST API: Wake-on-LAN (WoL)

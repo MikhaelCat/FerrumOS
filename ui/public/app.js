@@ -8,7 +8,6 @@ document.addEventListener("DOMContentLoaded", () => {
     initWifiManager();
     initRadarManager();
     initNetworkManager();
-    initParentalManager();
     initToolsManager();
     startStatsPolling();
 });
@@ -23,7 +22,6 @@ function initNavigation() {
         wifi: { title: "Беспроводная сеть Wi-Fi", subtitle: "Настройки 2.4 GHz (MT7620) и 5 GHz (MT7610E AC)" },
         radar: { title: "Wi-Fi Радар & Анализ эфира", subtitle: "Анализ радиопомех и автоматический выбор чистейшего канала (ACS)" },
         network: { title: "Сеть & Маршрутизация", subtitle: "Параметры WAN, коммутатора, LAN и DNS" },
-        parental: { title: "Родительский контроль & Доступ", subtitle: "Ограничение доступа по расписанию и принудительный SafeSearch" },
         tools: { title: "Инструменты & WoL", subtitle: "Удаленный запуск ПК (Magic Packet), Watchdog, DDNS и диагностика" },
         system: { title: "Система & Гарантии защиты", subtitle: "Аппаратная защита калибровок MTD2 и управление питанием" },
     };
@@ -903,6 +901,279 @@ function initNetworkManager() {
             btnSavePf.textContent = "💾 Применить правила проброса портов";
         }
     });
+
+    // ----------------------------------------------------
+    // 5. Physical Ethernet Switch Ports Monitor
+    // ----------------------------------------------------
+    const switchPortsGrid = document.getElementById("switch-ports-grid");
+    const btnRefreshSwitch = document.getElementById("btn-refresh-switch");
+
+    async function loadSwitchPorts() {
+        if (!switchPortsGrid) return;
+        try {
+            const res = await fetch("/api/v1/switch/ports");
+            const ports = await res.json();
+            switchPortsGrid.innerHTML = "";
+            ports.forEach(p => {
+                const badgeClass = p.link_up ? "badge-emerald" : "badge-rose";
+                const speedText = p.link_up ? `${p.speed_mbps} Mbps ${p.duplex}` : "Отключен";
+                const icon = p.link_up ? "🟢" : "⚫";
+                const div = document.createElement("div");
+                div.className = "card";
+                div.style.padding = "0.75rem";
+                div.style.textAlign = "center";
+                div.innerHTML = `
+                    <div style="font-size: 1.5rem; margin-bottom: 0.25rem;">${icon}</div>
+                    <div style="font-weight: 700; font-size: 0.85rem;">${p.port_name}</div>
+                    <div class="badge ${badgeClass}" style="margin-top: 0.35rem; font-size: 0.7rem;">${speedText}</div>
+                `;
+                switchPortsGrid.appendChild(div);
+            });
+        } catch (e) {
+            console.warn("Switch ports query failed", e);
+        }
+    }
+
+    btnRefreshSwitch?.addEventListener("click", loadSwitchPorts);
+    loadSwitchPorts();
+
+    // ----------------------------------------------------
+    // 6. IPv6 Dual-Stack Settings
+    // ----------------------------------------------------
+    const ipv6Enable = document.getElementById("ipv6-enable");
+    const ipv6Type = document.getElementById("ipv6-type");
+    const ipv6Dns1 = document.getElementById("ipv6-dns1");
+    const ipv6Dns2 = document.getElementById("ipv6-dns2");
+    const btnSaveIpv6 = document.getElementById("btn-save-ipv6");
+    const ipv6Status = document.getElementById("ipv6-save-status");
+
+    fetch("/api/v1/ipv6/config")
+        .then(r => r.json())
+        .then(cfg => {
+            if (!cfg) return;
+            if (ipv6Enable) ipv6Enable.checked = !!cfg.enabled;
+            if (ipv6Type && cfg.connection_type) ipv6Type.value = cfg.connection_type;
+            if (ipv6Dns1 && cfg.primary_dns) ipv6Dns1.value = cfg.primary_dns;
+            if (ipv6Dns2 && cfg.secondary_dns) ipv6Dns2.value = cfg.secondary_dns;
+        })
+        .catch(e => console.warn("IPv6 load failed", e));
+
+    btnSaveIpv6?.addEventListener("click", async () => {
+        const payload = {
+            enabled: ipv6Enable.checked,
+            connection_type: ipv6Type.value,
+            primary_dns: ipv6Dns1.value.trim(),
+            secondary_dns: ipv6Dns2.value.trim(),
+        };
+        btnSaveIpv6.textContent = "Сохранение...";
+        try {
+            const res = await fetch("/api/v1/ipv6/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (data.success) {
+                ipv6Status.textContent = "✅ Настройки IPv6 успешно сохранены!";
+                ipv6Status.className = "text-xs text-emerald align-self-center";
+            } else {
+                ipv6Status.textContent = "❌ " + data.message;
+                ipv6Status.className = "text-xs text-rose align-self-center";
+            }
+        } catch (e) {
+            ipv6Status.textContent = "Ошибка: " + e.message;
+        } finally {
+            btnSaveIpv6.textContent = "💾 Сохранить настройки IPv6";
+        }
+    });
+
+    // ----------------------------------------------------
+    // 7. IPTV, Multicast & Udpxy Streamer
+    // ----------------------------------------------------
+    const iptvSnooping = document.getElementById("iptv-snooping");
+    const iptvProxy = document.getElementById("iptv-proxy");
+    const iptvUdpxy = document.getElementById("iptv-udpxy");
+    const iptvPort = document.getElementById("iptv-udpxy-port");
+    const btnSaveIptv = document.getElementById("btn-save-iptv");
+    const iptvStatus = document.getElementById("iptv-save-status");
+
+    fetch("/api/v1/iptv/config")
+        .then(r => r.json())
+        .then(cfg => {
+            if (!cfg) return;
+            if (iptvSnooping) iptvSnooping.checked = !!cfg.igmp_snooping;
+            if (iptvProxy) iptvProxy.checked = !!cfg.igmp_proxy_enabled;
+            if (iptvUdpxy) iptvUdpxy.checked = !!cfg.udpxy_enabled;
+            if (iptvPort && cfg.udpxy_port) iptvPort.value = cfg.udpxy_port;
+        })
+        .catch(e => console.warn("IPTV load failed", e));
+
+    btnSaveIptv?.addEventListener("click", async () => {
+        const payload = {
+            igmp_snooping: iptvSnooping.checked,
+            igmp_proxy_enabled: iptvProxy.checked,
+            udpxy_enabled: iptvUdpxy.checked,
+            udpxy_port: parseInt(iptvPort.value, 10) || 4028,
+        };
+        btnSaveIptv.textContent = "Применение...";
+        try {
+            const res = await fetch("/api/v1/iptv/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (data.success) {
+                iptvStatus.textContent = "✅ Настройки IPTV и Udpxy применены!";
+                iptvStatus.className = "text-xs text-emerald align-self-center";
+            } else {
+                iptvStatus.textContent = "❌ " + data.message;
+                iptvStatus.className = "text-xs text-rose align-self-center";
+            }
+        } catch (e) {
+            iptvStatus.textContent = "Ошибка: " + e.message;
+        } finally {
+            btnSaveIptv.textContent = "💾 Применить настройки IPTV";
+        }
+    });
+
+    // ----------------------------------------------------
+    // 8. SPI Firewall & Security
+    // ----------------------------------------------------
+    const fwWanPing = document.getElementById("fw-wan-ping");
+    const fwSynFlood = document.getElementById("fw-syn-flood");
+    const fwPortScan = document.getElementById("fw-port-scan");
+    const btnSaveFw = document.getElementById("btn-save-firewall");
+    const fwStatus = document.getElementById("fw-save-status");
+
+    fetch("/api/v1/firewall/config")
+        .then(r => r.json())
+        .then(cfg => {
+            if (!cfg) return;
+            if (fwWanPing) fwWanPing.checked = !!cfg.wan_ping_respond;
+            if (fwSynFlood) fwSynFlood.checked = !!cfg.syn_flood_protection;
+            if (fwPortScan) fwPortScan.checked = !!cfg.port_scan_protection;
+        })
+        .catch(e => console.warn("Firewall load failed", e));
+
+    btnSaveFw?.addEventListener("click", async () => {
+        const payload = {
+            wan_ping_respond: fwWanPing.checked,
+            syn_flood_protection: fwSynFlood.checked,
+            port_scan_protection: fwPortScan.checked,
+        };
+        btnSaveFw.textContent = "Сохранение...";
+        try {
+            const res = await fetch("/api/v1/firewall/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload),
+            });
+            const data = await res.json();
+            if (data.success) {
+                fwStatus.textContent = "✅ Правила Firewall сохранены!";
+                fwStatus.className = "text-xs text-emerald align-self-center";
+            } else {
+                fwStatus.textContent = "❌ " + data.message;
+                fwStatus.className = "text-xs text-rose align-self-center";
+            }
+        } catch (e) {
+            fwStatus.textContent = "Ошибка: " + e.message;
+        } finally {
+            btnSaveFw.textContent = "💾 Сохранить правила Firewall";
+        }
+    });
+
+    // ----------------------------------------------------
+    // 9. Static Routes Table
+    // ----------------------------------------------------
+    const routesTbody = document.querySelector("#static-routes-table tbody");
+    const btnAddRoute = document.getElementById("btn-add-static-route");
+    const btnSaveRoutes = document.getElementById("btn-save-routes");
+    const routesStatus = document.getElementById("routes-save-status");
+    let currentRoutes = [];
+
+    function renderStaticRoutes() {
+        if (!routesTbody) return;
+        routesTbody.innerHTML = "";
+        if (currentRoutes.length === 0) {
+            routesTbody.innerHTML = `<tr><td colspan="5" class="text-center muted">Нет статических маршрутов. Нажмите «+ Добавить маршрут».</td></tr>`;
+            return;
+        }
+        currentRoutes.forEach((r, idx) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td><input type="text" class="form-control text-xs r-dest" value="${r.destination || ''}" placeholder="10.0.0.0/8"></td>
+                <td><input type="text" class="form-control text-xs r-gw" value="${r.gateway || ''}" placeholder="192.168.1.254"></td>
+                <td>
+                    <select class="form-control text-xs r-iface">
+                        <option value="WAN" ${r.interface === 'WAN' ? 'selected' : ''}>WAN</option>
+                        <option value="LAN" ${r.interface === 'LAN' ? 'selected' : ''}>LAN</option>
+                    </select>
+                </td>
+                <td><input type="number" class="form-control text-xs r-metric" value="${r.metric !== undefined ? r.metric : 1}" style="width: 70px;"></td>
+                <td><button class="btn btn-sm btn-danger btn-del-route" data-idx="${idx}">✕</button></td>
+            `;
+            routesTbody.appendChild(tr);
+        });
+
+        routesTbody.querySelectorAll(".btn-del-route").forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                const idx = parseInt(e.target.dataset.idx, 10);
+                currentRoutes.splice(idx, 1);
+                renderStaticRoutes();
+            });
+        });
+    }
+
+    btnAddRoute?.addEventListener("click", () => {
+        currentRoutes.push({ destination: "", gateway: "", interface: "WAN", metric: 1 });
+        renderStaticRoutes();
+    });
+
+    fetch("/api/v1/routes/config")
+        .then(r => r.json())
+        .then(routes => {
+            currentRoutes = routes || [];
+            renderStaticRoutes();
+        })
+        .catch(e => console.warn("Static routes load failed", e));
+
+    btnSaveRoutes?.addEventListener("click", async () => {
+        const rows = routesTbody?.querySelectorAll("tr") || [];
+        const routes = [];
+        rows.forEach(tr => {
+            const dest = tr.querySelector(".r-dest")?.value.trim();
+            const gw = tr.querySelector(".r-gw")?.value.trim();
+            const iface = tr.querySelector(".r-iface")?.value;
+            const metric = parseInt(tr.querySelector(".r-metric")?.value, 10) || 1;
+            if (dest && gw) {
+                routes.push({ destination: dest, gateway: gw, interface: iface, metric });
+            }
+        });
+
+        btnSaveRoutes.textContent = "Применение...";
+        try {
+            const res = await fetch("/api/v1/routes/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(routes),
+            });
+            const data = await res.json();
+            if (data.success) {
+                currentRoutes = routes;
+                routesStatus.textContent = "✅ Статические маршруты успешно применены!";
+                routesStatus.className = "text-xs text-emerald align-self-center";
+            } else {
+                routesStatus.textContent = "❌ " + data.message;
+                routesStatus.className = "text-xs text-rose align-self-center";
+            }
+        } catch (e) {
+            routesStatus.textContent = "Ошибка: " + e.message;
+        } finally {
+            btnSaveRoutes.textContent = "💾 Применить маршруты";
+        }
+    });
 }
 
 // ----------------------------------------------------
@@ -1110,118 +1381,6 @@ function initRadarManager() {
             alert("Ошибка ACS: " + e.message);
         } finally {
             btnAcs.textContent = "🚀 Оптимизировать каналы (ACS)";
-        }
-    });
-}
-
-// ----------------------------------------------------
-// 7. Parental Controls & SafeSearch Manager
-// ----------------------------------------------------
-function initParentalManager() {
-    const parentalEnable = document.getElementById("parental-enable");
-    const safesearchEnable = document.getElementById("parental-safesearch");
-    const rulesTbody = document.querySelector("#parental-rules-table tbody");
-    const btnAddRule = document.getElementById("btn-add-parental-rule");
-    const btnSaveParental = document.getElementById("btn-save-parental");
-    const statusSpan = document.getElementById("parental-save-status");
-
-    let currentParentalRules = [];
-
-    function renderParentalRules() {
-        if (!rulesTbody) return;
-        rulesTbody.innerHTML = "";
-        if (currentParentalRules.length === 0) {
-            rulesTbody.innerHTML = `<tr><td colspan="7" class="text-center muted">Нет правил ограничения доступа. Нажмите «+ Добавить правило».</td></tr>`;
-            return;
-        }
-
-        currentParentalRules.forEach((rule, idx) => {
-            const tr = document.createElement("tr");
-            tr.innerHTML = `
-                <td><input type="text" class="form-control text-xs p-name" value="${rule.name || ''}" placeholder="Телефон ребенка"></td>
-                <td><input type="text" class="form-control text-xs p-mac" value="${rule.mac || ''}" placeholder="AA:BB:CC:DD:EE:FF"></td>
-                <td class="text-center"><input type="checkbox" class="p-block" ${rule.blocked ? 'checked' : ''}></td>
-                <td class="text-center"><input type="checkbox" class="p-sched" ${rule.schedule_enabled ? 'checked' : ''}></td>
-                <td><input type="time" class="form-control text-xs p-start" value="${rule.start_time || '22:00'}"></td>
-                <td><input type="time" class="form-control text-xs p-end" value="${rule.end_time || '07:00'}"></td>
-                <td><button class="btn btn-sm btn-danger btn-del-parental" data-idx="${idx}">✕</button></td>
-            `;
-            rulesTbody.appendChild(tr);
-        });
-
-        rulesTbody.querySelectorAll(".btn-del-parental").forEach(btn => {
-            btn.addEventListener("click", (e) => {
-                const idx = parseInt(e.target.dataset.idx, 10);
-                currentParentalRules.splice(idx, 1);
-                renderParentalRules();
-            });
-        });
-    }
-
-    btnAddRule?.addEventListener("click", () => {
-        currentParentalRules.push({
-            name: "Устройство",
-            mac: "",
-            blocked: false,
-            schedule_enabled: true,
-            start_time: "22:00",
-            end_time: "07:00"
-        });
-        renderParentalRules();
-    });
-
-    fetch("/api/v1/parental/config")
-        .then(r => r.json())
-        .then(cfg => {
-            if (!cfg) return;
-            if (parentalEnable) parentalEnable.checked = !!cfg.enabled;
-            if (safesearchEnable) safesearchEnable.checked = !!cfg.safesearch_enabled;
-            currentParentalRules = cfg.rules || [];
-            renderParentalRules();
-        })
-        .catch(e => console.warn("Parental load failed", e));
-
-    btnSaveParental?.addEventListener("click", async () => {
-        const rows = rulesTbody?.querySelectorAll("tr") || [];
-        const rules = [];
-        rows.forEach(tr => {
-            const name = tr.querySelector(".p-name")?.value.trim();
-            const mac = tr.querySelector(".p-mac")?.value.trim();
-            const blocked = tr.querySelector(".p-block")?.checked;
-            const sched = tr.querySelector(".p-sched")?.checked;
-            const start = tr.querySelector(".p-start")?.value;
-            const end = tr.querySelector(".p-end")?.value;
-            if (mac) {
-                rules.push({ name: name || "Rule", mac, blocked, schedule_enabled: sched, start_time: start, end_time: end });
-            }
-        });
-
-        const payload = {
-            enabled: parentalEnable.checked,
-            safesearch_enabled: safesearchEnable.checked,
-            rules: rules,
-        };
-
-        btnSaveParental.textContent = "Сохранение...";
-        try {
-            const res = await fetch("/api/v1/parental/config", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify(payload)
-            });
-            const data = await res.json();
-            if (data.success) {
-                currentParentalRules = rules;
-                statusSpan.textContent = "✅ Правила родительского контроля сохранены!";
-                statusSpan.className = "text-xs text-emerald align-self-center";
-            } else {
-                statusSpan.textContent = "❌ " + data.message;
-                statusSpan.className = "text-xs text-rose align-self-center";
-            }
-        } catch (e) {
-            statusSpan.textContent = "Ошибка: " + e.message;
-        } finally {
-            btnSaveParental.textContent = "💾 Сохранить правила родительского контроля";
         }
     });
 }

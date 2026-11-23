@@ -49,10 +49,6 @@
                     <span class="icon">🌐</span>
                     <span>Сеть & Маршрутизация</span>
                 </button>
-                <button class="nav-item" data-tab="parental">
-                    <span class="icon">👨‍👩‍👧</span>
-                    <span>Родительский контроль</span>
-                </button>
                 <button class="nav-item" data-tab="tools">
                     <span class="icon">🔧</span>
                     <span>Инструменты & WoL</span>
@@ -1068,59 +1064,172 @@
                         </div>
                     </div>
                 </div>
-            </section>
 
-            <!-- TAB: PARENTAL CONTROLS -->
-            <section id="tab-parental" class="tab-pane">
+                <!-- 5. Physical Switch Ports Status Monitor -->
                 <div class="card mb-4">
                     <div class="card-header flex-between">
                         <div>
-                            <h3>👨‍👩‍👧 Родительский контроль & Доступ (AiProtection Lite)</h3>
-                            <p class="muted text-xs">Расписание доступа к интернету по MAC-адресам устройств и безопасный поиск SafeSearch.</p>
+                            <h3>🔌 Физические порты Ethernet (Коммутатор MediaTek 100M)</h3>
+                            <p class="muted text-xs">Статус физического соединения кабелей, автосогласование скорости и режим дуплекса.</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline" id="btn-refresh-switch">🔄 Обновить</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-5" id="switch-ports-grid" style="display:grid; grid-template-columns: repeat(5, 1fr); gap: 0.75rem;">
+                            <!-- Loaded via API -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 6. IPv6 Dual-Stack Settings -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>🌐 IPv6 Dual-Stack (IPv4 + IPv6)</h3>
+                            <p class="muted text-xs">Поддержка современного протокола IPv6 от вашего интернет-провайдера.</p>
                         </div>
                         <label class="switch">
-                            <input type="checkbox" id="parental-enable">
+                            <input type="checkbox" id="ipv6-enable" checked>
                             <span class="slider"></span>
                         </label>
                     </div>
                     <div class="card-body">
-                        <div class="toggle-card flex-between mb-3 text-xs">
-                            <div>
-                                <strong>Принудительный SafeSearch (Google, YouTube, Яндекс)</strong>
-                                <p class="muted">Блокирует взрослый контент, порнографию и нецензурные комментарии на всех устройствах в доме.</p>
+                        <div class="grid grid-3 mb-3">
+                            <div class="form-group">
+                                <label>Тип подключения IPv6:</label>
+                                <select id="ipv6-type" class="form-control">
+                                    <option value="native_dhcp6" selected>Native / DHCPv6-PD (Автоматический)</option>
+                                    <option value="slaac">SLAAC (Stateless Auto-Configuration)</option>
+                                    <option value="static">Статический IPv6</option>
+                                    <option value="passthrough">IPv6 Passthrough (Bridge)</option>
+                                </select>
                             </div>
-                            <label class="switch">
-                                <input type="checkbox" id="parental-safesearch" checked>
-                                <span class="slider"></span>
+                            <div class="form-group">
+                                <label>Основной IPv6 DNS:</label>
+                                <input type="text" id="ipv6-dns1" class="form-control text-xs" value="2606:4700:4700::1111">
+                            </div>
+                            <div class="form-group">
+                                <label>Резервный IPv6 DNS:</label>
+                                <input type="text" id="ipv6-dns2" class="form-control text-xs" value="2606:4700:4700::1001">
+                            </div>
+                        </div>
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-ipv6">💾 Сохранить настройки IPv6</button>
+                            <span id="ipv6-save-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 7. IPTV, IGMP Snooping & Udpxy Streamer -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>📺 IPTV Multicast, IGMP Proxy & Udpxy Streamer</h3>
+                            <p class="muted text-xs">Аппаратная фильтрация мультикаста и конвертер потоков для просмотра ТВ на Smart TV и смартфонах без заиканий Wi-Fi.</p>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-3 text-xs mb-3">
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Аппаратный IGMP Snooping</strong>
+                                    <p class="muted">Блокирует флуд мультикаста на не задействованные порты</p>
+                                </div>
+                                <input type="checkbox" id="iptv-snooping" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>IGMP Proxy (igmpproxy)</strong>
+                                    <p class="muted">Маршрутизация ТВ-потоков 239.x.x.x от провайдера в LAN</p>
+                                </div>
+                                <input type="checkbox" id="iptv-proxy" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Встроенный UDPXY сервер</strong>
+                                    <p class="muted">Превращает UDP multicast в HTTP поток для Wi-Fi и ТВ</p>
+                                </div>
+                                <input type="checkbox" id="iptv-udpxy" checked>
                             </label>
                         </div>
-
-                        <div class="mb-3">
-                            <div class="flex-between mb-2">
-                                <strong>Правила ограничения доступа для устройств:</strong>
-                                <button class="btn btn-sm btn-outline" id="btn-add-parental-rule">+ Добавить правило</button>
+                        <div class="grid grid-3 mb-3">
+                            <div class="form-group">
+                                <label>Порт UDPXY:</label>
+                                <input type="number" id="iptv-udpxy-port" class="form-control" value="4028">
+                                <span class="muted text-xs">Адрес для плейлистов: http://192.168.1.1:4028/udp/</span>
                             </div>
-                            <table class="cyber-table" id="parental-rules-table">
-                                <thead>
-                                    <tr>
-                                        <th>Название / Устройство</th>
-                                        <th>MAC-адрес</th>
-                                        <th>Блокировка</th>
-                                        <th>Расписание</th>
-                                        <th>Начало</th>
-                                        <th>Конец</th>
-                                        <th>Действие</th>
-                                    </tr>
-                                </thead>
-                                <tbody>
-                                    <!-- Rendered dynamically -->
-                                </tbody>
-                            </table>
                         </div>
-
                         <div class="flex-gap">
-                            <button class="btn btn-primary" id="btn-save-parental">💾 Сохранить правила родительского контроля</button>
-                            <span id="parental-save-status" class="text-xs align-self-center"></span>
+                            <button class="btn btn-primary" id="btn-save-iptv">💾 Применить настройки IPTV</button>
+                            <span id="iptv-save-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 8. SPI Firewall & Security -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>🛡️ SPI Firewall & Сетевая безопасность</h3>
+                        <p class="muted text-xs">Защита от сканирования из интернета, сетевых атак и перегрузки роутера.</p>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-3 text-xs mb-3">
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Отвечать на Ping из WAN</strong>
+                                    <p class="muted">Отключено = роутер невидим в интернете (Stealth)</p>
+                                </div>
+                                <input type="checkbox" id="fw-wan-ping">
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Защита от SYN Flood атак</strong>
+                                    <p class="muted">Ограничение интенсивности незавершенных TCP-сессий</p>
+                                </div>
+                                <input type="checkbox" id="fw-syn-flood" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Защита от сканирования портов</strong>
+                                    <p class="muted">Сброс некорректных TCP-флагов (Xmas / Null scan)</p>
+                                </div>
+                                <input type="checkbox" id="fw-port-scan" checked>
+                            </label>
+                        </div>
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-firewall">💾 Сохранить правила Firewall</button>
+                            <span id="fw-save-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 9. Static Routes Configuration -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>🗺️ Таблица статических маршрутов (Static Routes)</h3>
+                            <p class="muted text-xs">Направление трафика к локальным ресурсам провайдера, корпоративным сетям или VPN-шлюзам.</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline" id="btn-add-static-route">+ Добавить маршрут</button>
+                    </div>
+                    <div class="card-body">
+                        <table class="cyber-table mb-3" id="static-routes-table">
+                            <thead>
+                                <tr>
+                                    <th>Сеть назначения (IP/CIDR)</th>
+                                    <th>Шлюз (Gateway)</th>
+                                    <th>Интерфейс</th>
+                                    <th>Метрика</th>
+                                    <th>Действие</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Rendered dynamically -->
+                            </tbody>
+                        </table>
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-routes">💾 Применить маршруты</button>
+                            <span id="routes-save-status" class="text-xs align-self-center"></span>
                         </div>
                     </div>
                 </div>
