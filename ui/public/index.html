@@ -305,11 +305,15 @@
 
             <!-- TAB: WI-FI -->
             <section id="tab-wifi" class="tab-pane">
-                <div class="grid grid-2">
+                <div class="grid grid-2 mb-4">
+                    <!-- 2.4 GHz Card -->
                     <div class="card">
                         <div class="card-header flex-between">
-                            <h3>Wi-Fi 2.4 GHz (MT7620 2T2R)</h3>
-                            <span class="badge-pill">До 300 Мбит/с</span>
+                            <div>
+                                <h3>Wi-Fi 2.4 GHz (MediaTek MT7620A 2T2R)</h3>
+                                <span class="muted text-xs">MIMO 2x2:2 • До 300 Мбит/с</span>
+                            </div>
+                            <span class="badge-pill">2.4 GHz</span>
                         </div>
                         <div class="card-body">
                             <div class="form-group mb-2">
@@ -317,34 +321,93 @@
                                 <input type="text" id="wifi2-ssid" class="form-control" value="FerrumOS_2.4G">
                             </div>
                             <div class="form-group mb-2">
-                                <label>Пароль WPA2/WPA3:</label>
-                                <input type="password" id="wifi2-pass" class="form-control" value="12345678">
+                                <label>Пароль беспроводной сети:</label>
+                                <input type="password" id="wifi2-pass" class="form-control" value="ChangeMe123">
                             </div>
-                            <div class="form-group mb-2">
-                                <label>Канал:</label>
-                                <select id="wifi2-chan" class="form-control">
-                                    <option value="0">Автовыбор</option>
-                                    <option value="1">1 (2412 MHz)</option>
-                                    <option value="6" selected>6 (2437 MHz)</option>
-                                    <option value="11">11 (2462 MHz)</option>
-                                </select>
+                            <div class="grid grid-2 mb-2">
+                                <div class="form-group">
+                                    <label>Режим безопасности:</label>
+                                    <select id="wifi2-sec" class="form-control">
+                                        <option value="WPA2PSK" selected>WPA2-Personal (AES)</option>
+                                        <option value="WPA2WPA3">WPA2 / WPA3 Mixed</option>
+                                        <option value="WPA3SAE">WPA3-Personal (SAE)</option>
+                                        <option value="OPEN">Открытая (Без пароля)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Стандарт 802.11:</label>
+                                    <select id="wifi2-mode" class="form-control">
+                                        <option value="11bgn" selected>802.11b/g/n Mixed</option>
+                                        <option value="11n_only">802.11n Only (Greenfield)</option>
+                                    </select>
+                                </div>
                             </div>
-                            <div class="form-group mb-3">
-                                <label>Мощность передатчика (TX Power):</label>
-                                <select id="wifi2-pwr" class="form-control">
-                                    <option value="100" selected>100% (20 dBm)</option>
-                                    <option value="75">75%</option>
-                                    <option value="50">50%</option>
-                                </select>
+                            <div class="grid grid-2 mb-2">
+                                <div class="form-group">
+                                    <label>Канал (RU 1-13):</label>
+                                    <select id="wifi2-chan" class="form-control">
+                                        <option value="0">0 (Автовыбор ACS)</option>
+                                        <option value="1">1 (2412 MHz)</option>
+                                        <option value="2">2 (2417 MHz)</option>
+                                        <option value="3">3 (2422 MHz)</option>
+                                        <option value="4">4 (2427 MHz)</option>
+                                        <option value="5">5 (2432 MHz)</option>
+                                        <option value="6" selected>6 (2437 MHz)</option>
+                                        <option value="7">7 (2442 MHz)</option>
+                                        <option value="8">8 (2447 MHz)</option>
+                                        <option value="9">9 (2452 MHz)</option>
+                                        <option value="10">10 (2457 MHz)</option>
+                                        <option value="11">11 (2462 MHz)</option>
+                                        <option value="12">12 (2467 MHz)</option>
+                                        <option value="13">13 (2472 MHz)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Ширина канала:</label>
+                                    <select id="wifi2-bw" class="form-control">
+                                        <option value="40" selected>20/40 MHz (HT40)</option>
+                                        <option value="20">20 MHz (HT20)</option>
+                                    </select>
+                                </div>
                             </div>
-                            <button class="btn btn-primary" onclick="alert('Настройки 2.4G сохранены')">Применить 2.4G</button>
+                            <div class="grid grid-2 mb-3">
+                                <div class="form-group">
+                                    <label>Мощность TX Power:</label>
+                                    <select id="wifi2-pwr" class="form-control">
+                                        <option value="100" selected>100% (20 dBm)</option>
+                                        <option value="75">75% (17 dBm)</option>
+                                        <option value="50">50% (14 dBm)</option>
+                                        <option value="25">25% (10 dBm)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>PMF (802.11w Защита кадров):</label>
+                                    <select id="wifi2-pmf" class="form-control">
+                                        <option value="0">Отключено</option>
+                                        <option value="1" selected>Опционально (Capable)</option>
+                                        <option value="2">Обязательно (Required)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Дополнительные опции 2.4G:</label>
+                                <div class="mt-1">
+                                    <label class="text-xs mr-3"><input type="checkbox" id="wifi2-sgi" checked> Short GI (400ns, +11% скорости)</label>
+                                    <label class="text-xs mr-3"><input type="checkbox" id="wifi2-iso"> Изоляция клиентов</label>
+                                    <label class="text-xs"><input type="checkbox" id="wifi2-hide"> Скрыть SSID (Hide Broadcast)</label>
+                                </div>
+                            </div>
                         </div>
                     </div>
 
+                    <!-- 5 GHz Card -->
                     <div class="card">
                         <div class="card-header flex-between">
-                            <h3>Wi-Fi 5 GHz (MT7610E 802.11ac)</h3>
-                            <span class="badge-pill">До 433 Мбит/с</span>
+                            <div>
+                                <h3>Wi-Fi 5 GHz (MediaTek MT7610E 802.11ac)</h3>
+                                <span class="muted text-xs">PCIe 1T1R • До 433 Мбит/с</span>
+                            </div>
+                            <span class="badge-pill">5 GHz AC</span>
                         </div>
                         <div class="card-body">
                             <div class="form-group mb-2">
@@ -352,55 +415,487 @@
                                 <input type="text" id="wifi5-ssid" class="form-control" value="FerrumOS_5G">
                             </div>
                             <div class="form-group mb-2">
-                                <label>Пароль WPA2/WPA3:</label>
-                                <input type="password" id="wifi5-pass" class="form-control" value="12345678">
+                                <label>Пароль беспроводной сети:</label>
+                                <input type="password" id="wifi5-pass" class="form-control" value="ChangeMe123">
                             </div>
-                            <div class="form-group mb-2">
-                                <label>Ширина канала:</label>
-                                <select id="wifi5-bw" class="form-control">
-                                    <option value="80" selected>80 MHz (VHT80 - Макс. скорость)</option>
-                                    <option value="40">40 MHz</option>
-                                    <option value="20">20 MHz</option>
-                                </select>
+                            <div class="grid grid-2 mb-2">
+                                <div class="form-group">
+                                    <label>Режим безопасности:</label>
+                                    <select id="wifi5-sec" class="form-control">
+                                        <option value="WPA2PSK" selected>WPA2-Personal (AES)</option>
+                                        <option value="WPA2WPA3">WPA2 / WPA3 Mixed</option>
+                                        <option value="WPA3SAE">WPA3-Personal (SAE)</option>
+                                        <option value="OPEN">Открытая (Без пароля)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Стандарт 802.11:</label>
+                                    <select id="wifi5-mode" class="form-control">
+                                        <option value="11vht_ac" selected>802.11a/n/ac Mixed</option>
+                                        <option value="11ac_only">802.11ac Only (VHT)</option>
+                                    </select>
+                                </div>
                             </div>
-                            <div class="form-group mb-3">
-                                <label>Канал:</label>
-                                <select id="wifi5-chan" class="form-control">
-                                    <option value="36" selected>36 (5180 MHz)</option>
-                                    <option value="40">40 (5200 MHz)</option>
-                                    <option value="44">44 (5220 MHz)</option>
-                                    <option value="48">48 (5240 MHz)</option>
-                                </select>
+                            <div class="grid grid-2 mb-2">
+                                <div class="form-group">
+                                    <label>Канал 5G:</label>
+                                    <select id="wifi5-chan" class="form-control">
+                                        <option value="0">0 (Автовыбор ACS)</option>
+                                        <option value="36" selected>36 (5180 MHz)</option>
+                                        <option value="40">40 (5200 MHz)</option>
+                                        <option value="44">44 (5220 MHz)</option>
+                                        <option value="48">48 (5240 MHz)</option>
+                                        <option value="52">52 (5260 MHz DFS)</option>
+                                        <option value="56">56 (5280 MHz DFS)</option>
+                                        <option value="60">60 (5300 MHz DFS)</option>
+                                        <option value="64">64 (5320 MHz DFS)</option>
+                                        <option value="149">149 (5745 MHz)</option>
+                                        <option value="153">153 (5765 MHz)</option>
+                                        <option value="157">157 (5785 MHz)</option>
+                                        <option value="161">161 (5805 MHz)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>Ширина канала:</label>
+                                    <select id="wifi5-bw" class="form-control">
+                                        <option value="80" selected>80 MHz (VHT80 - Макс. 433 Мбит/с)</option>
+                                        <option value="40">40 MHz (VHT40)</option>
+                                        <option value="20">20 MHz (VHT20)</option>
+                                    </select>
+                                </div>
                             </div>
-                            <button class="btn btn-primary" onclick="alert('Настройки 5G сохранены')">Применить 5G</button>
+                            <div class="grid grid-2 mb-3">
+                                <div class="form-group">
+                                    <label>Мощность TX Power:</label>
+                                    <select id="wifi5-pwr" class="form-control">
+                                        <option value="100" selected>100% (20 dBm)</option>
+                                        <option value="75">75% (17 dBm)</option>
+                                        <option value="50">50% (14 dBm)</option>
+                                        <option value="25">25% (10 dBm)</option>
+                                    </select>
+                                </div>
+                                <div class="form-group">
+                                    <label>PMF (802.11w Защита кадров):</label>
+                                    <select id="wifi5-pmf" class="form-control">
+                                        <option value="0">Отключено</option>
+                                        <option value="1" selected>Опционально (Capable)</option>
+                                        <option value="2">Обязательно (Required)</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="form-group">
+                                <label>Дополнительные опции 5G:</label>
+                                <div class="mt-1">
+                                    <label class="text-xs mr-3"><input type="checkbox" id="wifi5-sgi" checked> VHT Short GI (400ns)</label>
+                                    <label class="text-xs mr-3"><input type="checkbox" id="wifi5-bf" checked> Beamforming (ITxBf)</label>
+                                    <label class="text-xs mr-3"><input type="checkbox" id="wifi5-stbc" checked> STBC / LDPC</label>
+                                    <label class="text-xs mr-3"><input type="checkbox" id="wifi5-iso"> Изоляция клиентов</label>
+                                    <label class="text-xs"><input type="checkbox" id="wifi5-hide"> Скрыть SSID</label>
+                                </div>
+                            </div>
                         </div>
                     </div>
+                </div>
+
+                <!-- Advanced Acceleration & Roaming -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>Аппаратные оптимизации, Roaming & Smart Connect</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-3 text-xs mb-3">
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>802.11k & 802.11v Roaming</strong>
+                                    <p class="muted">Быстрый переход между диапазонами без разрыва звонков</p>
+                                </div>
+                                <input type="checkbox" id="wifi-roaming" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>802.11r Fast BSS Transition</strong>
+                                    <p class="muted">Мгновенный хендовер с предварительным обменом ключами</p>
+                                </div>
+                                <input type="checkbox" id="wifi-ft" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Band Steering (Smart Connect)</strong>
+                                    <p class="muted">Автоматически переводит двухдиапазонные клиенты на быстрый 5G</p>
+                                </div>
+                                <input type="checkbox" id="wifi-band-steering">
+                            </label>
+                        </div>
+                        <div class="grid grid-3 text-xs">
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>TxBurst & A-MPDU</strong>
+                                    <p class="muted">Пакетная агрегация (+25% к реальной скорости передачи)</p>
+                                </div>
+                                <input type="checkbox" id="wifi-burst" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>WMM QoS (Multimedia)</strong>
+                                    <p class="muted">Приоритезация видео/голосового трафика (нужно для >54 Mbps)</p>
+                                </div>
+                                <input type="checkbox" id="wifi-wmm" checked>
+                            </label>
+                            <div class="toggle-card">
+                                <label><strong>Порог отсечения слабого сигнала:</strong></label>
+                                <div class="flex-between mt-1">
+                                    <input type="range" id="wifi-rssi" min="-85" max="-65" value="-75" style="width: 70%;">
+                                    <span id="wifi-rssi-val" class="text-cyan font-bold">-75 dBm</span>
+                                </div>
+                                <p class="muted text-xs mt-1">Отключает «залипших» клиентов при ухудшении сигнала</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Guest Wi-Fi Network -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>Гостевая сеть Wi-Fi (MBSSID)</h3>
+                            <p class="muted text-xs">Изолированная беспроводная сеть для гостей без доступа к вашей локальной сети и роутеру.</p>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="guest-enable">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="card-body" id="guest-settings-box">
+                        <div class="grid grid-3 mb-2">
+                            <div class="form-group">
+                                <label>Имя гостевой сети (SSID):</label>
+                                <input type="text" id="guest-ssid" class="form-control" value="FerrumOS_Guest">
+                            </div>
+                            <div class="form-group">
+                                <label>Пароль:</label>
+                                <input type="password" id="guest-pass" class="form-control" value="GuestPassword123">
+                            </div>
+                            <div class="form-group">
+                                <label>Ограничение скорости (Мбит/с):</label>
+                                <input type="number" id="guest-bw-limit" class="form-control" value="20" min="1" max="100">
+                            </div>
+                        </div>
+                        <label class="text-xs"><input type="checkbox" id="guest-iso-lan" checked> Полностью изолировать гостей от домашней локальной сети (192.168.1.x) и веб-интерфейса</label>
+                    </div>
+                </div>
+
+                <div class="flex-gap">
+                    <button class="btn btn-success" id="btn-save-wifi">💾 Применить и сохранить настройки Wi-Fi</button>
+                    <span id="wifi-save-status" class="text-xs align-self-center"></span>
                 </div>
             </section>
 
             <!-- TAB: NETWORK -->
             <section id="tab-network" class="tab-pane">
+                <!-- 1. DNS & DoH / DoT Settings -->
                 <div class="card mb-4">
                     <div class="card-header">
-                        <h3>Интернет (WAN eth2.2)</h3>
+                        <h3>DNS, DNS-over-HTTPS (DoH) & Безопасность</h3>
+                        <p class="muted text-xs">Шифрование DNS-запросов, защита от подмены DNS провайдером, анти-ребиндинг и блокировка рекламы.</p>
                     </div>
                     <div class="card-body">
-                        <div class="form-group mb-2">
-                            <label>Тип подключения:</label>
-                            <select class="form-control">
-                                <option selected>IPoE / DHCP (Автоматический)</option>
-                                <option>Статический IP</option>
-                                <option>PPPoE</option>
-                            </select>
+                        <div class="grid grid-2 mb-3">
+                            <div class="form-group">
+                                <label>Предустановленный DNS-провайдер:</label>
+                                <select id="dns-provider" class="form-control">
+                                    <option value="cloudflare" selected>Cloudflare DNS (1.1.1.1 + 1.0.0.1 DoH) [Рекомендуется]</option>
+                                    <option value="google">Google Public DNS (8.8.8.8 + 8.8.4.4)</option>
+                                    <option value="adguard">AdGuard DNS (94.140.14.14 - Блокировка рекламы)</option>
+                                    <option value="quad9">Quad9 Security (9.9.9.9 - Блокировка вредоносных сайтов)</option>
+                                    <option value="yandex">Яндекс DNS (77.88.8.8 - Быстрый по РФ)</option>
+                                    <option value="custom">Пользовательский DNS</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>DoH URL (DNS-over-HTTPS endpoint):</label>
+                                <input type="text" id="dns-doh-url" class="form-control" value="https://cloudflare-dns.com/dns-query">
+                            </div>
                         </div>
-                        <div class="form-group mb-2">
-                            <label>DNS Серверы:</label>
-                            <select class="form-control">
-                                <option selected>Cloudflare DNS (1.1.1.1 + 1.0.0.1 DoH)</option>
-                                <option>Google DNS (8.8.8.8)</option>
-                                <option>AdGuard DNS (Блокировка рекламы)</option>
-                                <option>DNS Провайдера</option>
-                            </select>
+                        <div class="grid grid-2 mb-3">
+                            <div class="form-group">
+                                <label>Основной DNS сервер (IPv4):</label>
+                                <input type="text" id="dns-primary" class="form-control" value="1.1.1.1">
+                            </div>
+                            <div class="form-group">
+                                <label>Резервный DNS сервер (IPv4):</label>
+                                <input type="text" id="dns-secondary" class="form-control" value="1.0.0.1">
+                            </div>
+                        </div>
+
+                        <!-- DNS Security Toggles -->
+                        <div class="grid grid-3 text-xs mb-3">
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>DNS-over-HTTPS (DoH)</strong>
+                                    <p class="muted">Шифрование запросов к DNS от прослушивания провайдером</p>
+                                </div>
+                                <input type="checkbox" id="dns-doh-enable" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Принудительный DNS (Port 53 Hijack)</strong>
+                                    <p class="muted">Перехват запросов Smart TV и Android с зашитыми DNS</p>
+                                </div>
+                                <input type="checkbox" id="dns-force-router" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Anti-DNS-Rebinding</strong>
+                                    <p class="muted">Защита локальных устройств от вредоносных веб-скриптов</p>
+                                </div>
+                                <input type="checkbox" id="dns-anti-rebind" checked>
+                            </label>
+                        </div>
+                        <div class="grid grid-2 text-xs mb-3">
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Встроенный DNS AdBlock</strong>
+                                    <p class="muted">Блокировка баннеров, трекеров и фишинговых сайтов на уровне роутера</p>
+                                </div>
+                                <input type="checkbox" id="dns-adblock-enable" checked>
+                            </label>
+                            <div class="toggle-card">
+                                <strong>Пользовательские DNS записи (Локальные имена):</strong>
+                                <textarea id="dns-custom-hosts" class="form-control mt-1" rows="2" placeholder="192.168.1.50 nas.lan&#10;192.168.1.1 router.home"></textarea>
+                            </div>
+                        </div>
+
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-dns">💾 Сохранить настройки DNS</button>
+                            <span id="dns-save-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 2. WAN & Internet Connection -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>Интернет (WAN eth2.2) & Hardware NAT</h3>
+                        <p class="muted text-xs">Настройка подключения провайдера, 802.1Q VLAN для IPTV и аппаратного ускорителя PPE.</p>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-3 mb-3">
+                            <div class="form-group">
+                                <label>Тип подключения (WAN):</label>
+                                <select id="wan-type" class="form-control">
+                                    <option value="dhcp" selected>IPoE / DHCP (Автоматический IP)</option>
+                                    <option value="static">Статический IP адрес</option>
+                                    <option value="pppoe">PPPoE (Логин и пароль)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Размер MTU:</label>
+                                <input type="number" id="wan-mtu" class="form-control" value="1500" min="576" max="1500">
+                            </div>
+                            <div class="form-group">
+                                <label>Клонирование MAC-адреса WAN:</label>
+                                <input type="text" id="wan-mac" class="form-control" placeholder="Например: 00:11:22:33:44:55">
+                            </div>
+                        </div>
+
+                        <!-- Static IP Fields -->
+                        <div id="wan-static-box" class="grid grid-3 mb-3 d-none">
+                            <div class="form-group">
+                                <label>IP-адрес WAN:</label>
+                                <input type="text" id="wan-static-ip" class="form-control" placeholder="192.168.0.100">
+                            </div>
+                            <div class="form-group">
+                                <label>Маска подсети:</label>
+                                <input type="text" id="wan-static-mask" class="form-control" value="255.255.255.0">
+                            </div>
+                            <div class="form-group">
+                                <label>Основной шлюз:</label>
+                                <input type="text" id="wan-static-gw" class="form-control" placeholder="192.168.0.1">
+                            </div>
+                        </div>
+
+                        <!-- PPPoE Fields -->
+                        <div id="wan-pppoe-box" class="grid grid-3 mb-3 d-none">
+                            <div class="form-group">
+                                <label>Имя пользователя PPPoE:</label>
+                                <input type="text" id="wan-pppoe-user" class="form-control" placeholder="login@provider">
+                            </div>
+                            <div class="form-group">
+                                <label>Пароль PPPoE:</label>
+                                <input type="password" id="wan-pppoe-pass" class="form-control" placeholder="••••••••">
+                            </div>
+                            <div class="form-group">
+                                <label>Имя службы / Концентратора (необязательно):</label>
+                                <input type="text" id="wan-pppoe-service" class="form-control" placeholder="">
+                            </div>
+                        </div>
+
+                        <!-- VLAN & IPTV -->
+                        <div class="grid grid-3 mb-3">
+                            <div class="form-group">
+                                <label>802.1Q Internet VLAN ID:</label>
+                                <input type="number" id="wan-vlan-internet" class="form-control" placeholder="Отключено (Untagged)">
+                            </div>
+                            <div class="form-group">
+                                <label>802.1Q IPTV VLAN ID:</label>
+                                <input type="number" id="wan-vlan-iptv" class="form-control" placeholder="Отключено">
+                            </div>
+                            <div class="form-group">
+                                <label>LAN Порт для ТВ-приставки (STB):</label>
+                                <select id="wan-iptv-port" class="form-control">
+                                    <option value="0">Отключено</option>
+                                    <option value="4" selected>LAN 4 (Bridge IPTV)</option>
+                                    <option value="3">LAN 3 (Bridge IPTV)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <!-- Hardware NAT & UPnP -->
+                        <div class="grid grid-2 text-xs mb-3">
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Аппаратный ускоритель NAT (MediaTek PPE)</strong>
+                                    <p class="muted">Аппаратный Flow Engine 100 Мбит/с Full-Duplex с 0% нагрузки на процессор MT7620</p>
+                                </div>
+                                <input type="checkbox" id="wan-hw-nat" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>UPnP & NAT-PMP (Автоматический проброс портов)</strong>
+                                    <p class="muted">Необходимо для PlayStation, Xbox, торрент-клиентов и сетевых игр</p>
+                                </div>
+                                <input type="checkbox" id="wan-upnp" checked>
+                            </label>
+                        </div>
+
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-wan">💾 Сохранить настройки WAN</button>
+                            <span id="wan-save-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 3. LAN & DHCP Server -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>Локальная сеть (LAN) & Сервер DHCP</h3>
+                        <p class="muted text-xs">Настройка домашней подсети, пула адресов и статической привязки MAC к IP.</p>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-4 mb-3">
+                            <div class="form-group">
+                                <label>IP-адрес роутера:</label>
+                                <input type="text" id="lan-ip" class="form-control" value="192.168.1.1">
+                            </div>
+                            <div class="form-group">
+                                <label>Маска подсети:</label>
+                                <input type="text" id="lan-mask" class="form-control" value="255.255.255.0">
+                            </div>
+                            <div class="form-group">
+                                <label>Начальный IP пула DHCP:</label>
+                                <input type="text" id="lan-dhcp-start" class="form-control" value="192.168.1.100">
+                            </div>
+                            <div class="form-group">
+                                <label>Конечный IP пула DHCP:</label>
+                                <input type="text" id="lan-dhcp-end" class="form-control" value="192.168.1.244">
+                            </div>
+                        </div>
+
+                        <div class="flex-between mb-3 text-xs">
+                            <label><input type="checkbox" id="lan-dhcp-enable" checked> <strong>Включить DHCP-сервер</strong></label>
+                            <div class="flex-gap">
+                                <span class="muted align-self-center">Время аренды (часов):</span>
+                                <input type="number" id="lan-lease-hours" class="form-control" value="24" min="1" max="168" style="width: 80px;">
+                            </div>
+                        </div>
+
+                        <!-- Static Leases Table -->
+                        <div class="mb-4">
+                            <div class="flex-between mb-2">
+                                <strong>Статические IP-адреса (Привязка MAC к IP):</strong>
+                                <button class="btn btn-sm btn-outline" id="btn-add-static-lease">+ Добавить привязку</button>
+                            </div>
+                            <table class="cyber-table" id="static-leases-table">
+                                <thead>
+                                    <tr>
+                                        <th>MAC-адрес</th>
+                                        <th>Фиксированный IP</th>
+                                        <th>Имя устройства / Хост</th>
+                                        <th>Действие</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Rendered dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <!-- Active DHCP Leases Monitor -->
+                        <div class="mb-3">
+                            <div class="flex-between mb-2">
+                                <strong>Активные клиенты DHCP в сети:</strong>
+                                <button class="btn btn-sm btn-outline" id="btn-refresh-dhcp-leases">🔄 Обновить список</button>
+                            </div>
+                            <table class="cyber-table" id="active-dhcp-table">
+                                <thead>
+                                    <tr>
+                                        <th>Имя устройства</th>
+                                        <th>IP-адрес</th>
+                                        <th>MAC-адрес</th>
+                                        <th>Срок аренды</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Loaded via API -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-lan">💾 Сохранить настройки LAN & DHCP</button>
+                            <span id="lan-save-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4. Port Forwarding (Виртуальные серверы) & DMZ -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>Проброс портов (Port Forwarding) & DMZ</h3>
+                        <p class="muted text-xs">Организация доступа к серверам, камерам, торрентам и игровым сервисам из внешней сети.</p>
+                    </div>
+                    <div class="card-body">
+                        <div class="flex-between mb-2">
+                            <strong>Правила перенаправления портов:</strong>
+                            <button class="btn btn-sm btn-outline" id="btn-add-pf-rule">+ Добавить правило</button>
+                        </div>
+                        <table class="cyber-table mb-3" id="pf-rules-table">
+                            <thead>
+                                <tr>
+                                    <th>Название</th>
+                                    <th>Протокол</th>
+                                    <th>Внешний порт</th>
+                                    <th>Внутренний IP</th>
+                                    <th>Внутренний порт</th>
+                                    <th>Действие</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Rendered dynamically -->
+                            </tbody>
+                        </table>
+
+                        <div class="grid grid-2 mb-3">
+                            <div class="form-group">
+                                <label>DMZ Host IP (Зона свободной адресации):</label>
+                                <input type="text" id="wan-dmz-ip" class="form-control" placeholder="например 192.168.1.150 (отключено, если пусто)">
+                                <p class="muted text-xs mt-1">Перенаправляет все не сопоставленные внешние пакеты на один выбранный компьютер.</p>
+                            </div>
+                        </div>
+
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-pf">💾 Применить правила проброса портов</button>
+                            <span id="pf-save-status" class="text-xs align-self-center"></span>
                         </div>
                     </div>
                 </div>

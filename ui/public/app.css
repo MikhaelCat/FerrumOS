@@ -486,5 +486,37 @@ input:checked + .slider:before {
 .muted { color: var(--text-muted); }
 .text-cyan { color: var(--cyan); }
 .text-emerald { color: var(--emerald); }
+.text-rose { color: var(--rose); }
 .text-center { text-align: center; }
 .d-none { display: none !important; }
+
+/* Cyberpunk Clean Tables */
+.cyber-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin-top: 0.5rem;
+    font-size: 0.8rem;
+}
+.cyber-table th {
+    text-align: left;
+    padding: 0.6rem 0.75rem;
+    background: #090d16;
+    color: var(--cyan);
+    border-bottom: 1px solid var(--border-color);
+    font-weight: 600;
+}
+.cyber-table td {
+    padding: 0.6rem 0.75rem;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+    color: var(--text-light);
+}
+.cyber-table tr:hover td {
+    background: rgba(255, 255, 255, 0.02);
+}
+.cyber-table .form-control {
+    padding: 0.35rem 0.5rem;
+    font-size: 0.75rem;
+}
+.align-self-center {
+    align-self: center;
+}

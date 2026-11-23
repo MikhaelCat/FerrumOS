@@ -1,4 +1,7 @@
-use crate::network::{get_network_interfaces, WifiConfig};
+use crate::network::{
+    get_network_interfaces, WifiConfig, DnsAdvancedConfig, LanDhcpConfig, WanConfig,
+    apply_wifi_config, apply_dns_config, apply_lan_config, apply_wan_config, get_dhcp_leases
+};
 use crate::parser::{parse_proxy_uri, ProxyConfig};
 use crate::singbox::{generate_singbox_config, RoutingMode, SingBoxConfig};
 use crate::system::get_system_status;
@@ -15,15 +18,41 @@ pub struct AppState {
     #[allow(dead_code)]
     pub zapret_config: Arc<Mutex<ZapretConfig>>,
     pub wifi_config: Arc<Mutex<WifiConfig>>,
+    pub dns_config: Arc<Mutex<DnsAdvancedConfig>>,
+    pub lan_config: Arc<Mutex<LanDhcpConfig>>,
+    pub wan_config: Arc<Mutex<WanConfig>>,
 }
 
 impl AppState {
     pub fn new() -> Self {
+        let wifi_cfg = std::fs::read_to_string("/etc/storage/wifi_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<WifiConfig>(&s).ok())
+            .unwrap_or_default();
+
+        let dns_cfg = std::fs::read_to_string("/etc/storage/dns_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<DnsAdvancedConfig>(&s).ok())
+            .unwrap_or_default();
+
+        let lan_cfg = std::fs::read_to_string("/etc/storage/lan_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<LanDhcpConfig>(&s).ok())
+            .unwrap_or_default();
+
+        let wan_cfg = std::fs::read_to_string("/etc/storage/wan_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<WanConfig>(&s).ok())
+            .unwrap_or_default();
+
         AppState {
             proxy_config: Arc::new(Mutex::new(None)),
             routing_mode: Arc::new(Mutex::new(RoutingMode::SmartRu)),
             zapret_config: Arc::new(Mutex::new(ZapretConfig::default())),
-            wifi_config: Arc::new(Mutex::new(WifiConfig::default())),
+            wifi_config: Arc::new(Mutex::new(wifi_cfg)),
+            dns_config: Arc::new(Mutex::new(dns_cfg)),
+            lan_config: Arc::new(Mutex::new(lan_cfg)),
+            wan_config: Arc::new(Mutex::new(wan_cfg)),
         }
     }
 }
@@ -142,16 +171,125 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             let _ = request.as_reader().read_to_string(&mut body);
             if let Ok(new_cfg) = serde_json::from_str::<WifiConfig>(&body) {
                 *state.wifi_config.lock().unwrap() = new_cfg.clone();
-                let _ = crate::network::apply_wifi_config(&new_cfg);
+                let _ = apply_wifi_config(&new_cfg);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/wifi_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
                 let resp = GenericResp {
                     success: true,
-                    message: "Wi-Fi settings applied to MT7620/MT7610 radio hardware".into(),
+                    message: "Wi-Fi settings applied to MT7620/MT7610 radio hardware and saved to Flash".into(),
                 };
                 respond_json(request, &resp, cors_header, content_type_json);
             } else {
                 let resp = GenericResp {
                     success: false,
                     message: "Invalid Wi-Fi JSON payload".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: DNS Advanced & DoH
+        (Method::Get, "/api/v1/dns/config") => {
+            let dns = state.dns_config.lock().unwrap().clone();
+            respond_json(request, &dns, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/dns/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<DnsAdvancedConfig>(&body) {
+                *state.dns_config.lock().unwrap() = new_cfg.clone();
+                let _ = apply_dns_config(&new_cfg);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/dns_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
+                let resp = GenericResp {
+                    success: true,
+                    message: "DNS & DoH settings saved to Flash and dnsmasq reloaded".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Invalid DNS JSON payload".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: LAN & DHCP
+        (Method::Get, "/api/v1/lan/config") => {
+            let lan = state.lan_config.lock().unwrap().clone();
+            respond_json(request, &lan, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/lan/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<LanDhcpConfig>(&body) {
+                *state.lan_config.lock().unwrap() = new_cfg.clone();
+                let _ = apply_lan_config(&new_cfg);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/lan_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
+                let resp = GenericResp {
+                    success: true,
+                    message: "LAN & DHCP static leases saved to Flash and applied".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Invalid LAN JSON payload".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: DHCP Active Leases
+        (Method::Get, "/api/v1/dhcp/leases") => {
+            let leases = get_dhcp_leases();
+            respond_json(request, &leases, cors_header, content_type_json);
+        }
+
+        // REST API: WAN & NAT Port Forwarding
+        (Method::Get, "/api/v1/wan/config") => {
+            let wan = state.wan_config.lock().unwrap().clone();
+            respond_json(request, &wan, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/wan/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<WanConfig>(&body) {
+                *state.wan_config.lock().unwrap() = new_cfg.clone();
+                let _ = apply_wan_config(&new_cfg);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/wan_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
+                let resp = GenericResp {
+                    success: true,
+                    message: "WAN, Port Forwarding and Hardware NAT settings saved and active".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Invalid WAN JSON payload".into(),
                 };
                 respond_json(request, &resp, cors_header, content_type_json);
             }
