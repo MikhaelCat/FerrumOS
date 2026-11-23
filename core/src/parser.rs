@@ -377,4 +377,19 @@ mod tests {
         assert_eq!(cfg.password.as_deref(), Some("pwd123"));
         assert_eq!(cfg.tag, "ShortHy2");
     }
+
+    #[test]
+    fn test_empty_and_invalid_uris() {
+        assert!(parse_proxy_uri("").is_err());
+        assert!(parse_proxy_uri("   ").is_err());
+        assert!(parse_proxy_uri("http://google.com").is_err());
+        assert!(parse_proxy_uri("vless://@1.1.1.1:443").is_err());
+    }
+
+    #[test]
+    fn test_url_encoded_tag_decoding() {
+        let uri = "vless://b831381d-6324-4d53-ad4f-8cda48b30811@1.1.1.1:443#%D0%A0%D0%BE%D1%83%D1%82%D0%B5%D1%80";
+        let cfg = parse_proxy_uri(uri).expect("Should parse with cyrillic fragment");
+        assert_eq!(cfg.tag, "Роутер");
+    }
 }

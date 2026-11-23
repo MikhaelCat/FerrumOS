@@ -184,16 +184,45 @@ pub fn handle_request(mut request: Request, state: &AppState) {
     let url = request.url().to_string();
     let method = request.method().clone();
 
-    // CORS and Security Headers
+    // Security Headers
+    let sec_xfo = Header::from_bytes(&b"X-Frame-Options"[..], &b"DENY"[..]).unwrap();
+    let sec_nosniff = Header::from_bytes(&b"X-Content-Type-Options"[..], &b"nosniff"[..]).unwrap();
+    let sec_ref = Header::from_bytes(&b"Referrer-Policy"[..], &b"no-referrer"[..]).unwrap();
     let cors_header = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap();
     let content_type_json = Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]).unwrap();
     let content_type_html = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap();
     let content_type_js = Header::from_bytes(&b"Content-Type"[..], &b"application/javascript; charset=utf-8"[..]).unwrap();
     let content_type_css = Header::from_bytes(&b"Content-Type"[..], &b"text/css; charset=utf-8"[..]).unwrap();
 
+    // Cross-Origin Request Protection (Anti-CSRF on state-modifying requests)
+    if method == Method::Post {
+        let is_valid_origin = request.headers().iter().all(|h| {
+            if h.field.equiv("Origin") {
+                let val = h.value.as_str();
+                val.starts_with("http://192.168.1.1")
+                    || val.starts_with("http://localhost")
+                    || val.starts_with("http://127.0.0.1")
+                    || val.starts_with("http://[::1]")
+            } else {
+                true
+            }
+        });
+
+        if !is_valid_origin {
+            let resp = Response::from_string("403 Forbidden: Cross-Origin Request Blocked")
+                .with_status_code(StatusCode(403))
+                .with_header(sec_xfo)
+                .with_header(sec_nosniff);
+            let _ = request.respond(resp);
+            return;
+        }
+    }
+
     if method == Method::Options {
         let resp = Response::empty(StatusCode(204))
             .with_header(cors_header)
+            .with_header(sec_xfo)
+            .with_header(sec_nosniff)
             .with_header(Header::from_bytes(&b"Access-Control-Allow-Methods"[..], &b"GET, POST, OPTIONS"[..]).unwrap())
             .with_header(Header::from_bytes(&b"Access-Control-Allow-Headers"[..], &b"Content-Type"[..]).unwrap());
         let _ = request.respond(resp);
@@ -204,17 +233,24 @@ pub fn handle_request(mut request: Request, state: &AppState) {
         // UI static assets
         (Method::Get, "/") | (Method::Get, "/index.html") => {
             let resp = Response::from_string(INDEX_HTML)
-                .with_header(content_type_html);
+                .with_header(content_type_html)
+                .with_header(sec_xfo)
+                .with_header(sec_nosniff)
+                .with_header(sec_ref);
             let _ = request.respond(resp);
         }
         (Method::Get, "/app.js") => {
             let resp = Response::from_string(APP_JS)
-                .with_header(content_type_js);
+                .with_header(content_type_js)
+                .with_header(sec_xfo)
+                .with_header(sec_nosniff);
             let _ = request.respond(resp);
         }
         (Method::Get, "/app.css") => {
             let resp = Response::from_string(APP_CSS)
-                .with_header(content_type_css);
+                .with_header(content_type_css)
+                .with_header(sec_xfo)
+                .with_header(sec_nosniff);
             let _ = request.respond(resp);
         }
 
@@ -809,6 +845,105 @@ fn respond_json<T: Serialize>(request: Request, data: &T, cors: Header, content_
     let json_bytes = serde_json::to_vec(data).unwrap_or_default();
     let resp = Response::from_data(json_bytes)
         .with_header(cors)
-        .with_header(content_type);
+        .with_header(content_type)
+        .with_header(Header::from_bytes(&b"X-Frame-Options"[..], &b"DENY"[..]).unwrap())
+        .with_header(Header::from_bytes(&b"X-Content-Type-Options"[..], &b"nosniff"[..]).unwrap())
+        .with_header(Header::from_bytes(&b"Referrer-Policy"[..], &b"no-referrer"[..]).unwrap());
     let _ = request.respond(resp);
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::network::{WifiConfig, Ipv6Config, IptvConfig, FirewallConfig, StaticRoute, PingWatchdogConfig, SqmQosConfig};
+
+    #[test]
+    fn test_wifi_config_roundtrip() {
+        let default_cfg = WifiConfig::default();
+        let json = serde_json::to_string(&default_cfg).expect("Serialization failed");
+        let parsed: WifiConfig = serde_json::from_str(&json).expect("Deserialization failed");
+        assert_eq!(parsed.wifi_2g_ssid, default_cfg.wifi_2g_ssid);
+        assert_eq!(parsed.wifi_5g_bandwidth, 80);
+    }
+
+    #[test]
+    fn test_ipv6_config_roundtrip() {
+        let cfg = Ipv6Config {
+            enabled: true,
+            connection_type: "native_dhcp6".into(),
+            primary_dns: "2606:4700:4700::1111".into(),
+            secondary_dns: "2606:4700:4700::1001".into(),
+        };
+        let json = serde_json::to_string(&cfg).expect("Serialization failed");
+        let parsed: Ipv6Config = serde_json::from_str(&json).expect("Deserialization failed");
+        assert!(parsed.enabled);
+        assert_eq!(parsed.connection_type, "native_dhcp6");
+    }
+
+    #[test]
+    fn test_iptv_config_roundtrip() {
+        let cfg = IptvConfig {
+            igmp_snooping: true,
+            igmp_proxy_enabled: true,
+            udpxy_enabled: true,
+            udpxy_port: 4028,
+        };
+        let json = serde_json::to_string(&cfg).expect("Serialization failed");
+        let parsed: IptvConfig = serde_json::from_str(&json).expect("Deserialization failed");
+        assert_eq!(parsed.udpxy_port, 4028);
+        assert!(parsed.igmp_snooping);
+    }
+
+    #[test]
+    fn test_firewall_config_roundtrip() {
+        let cfg = FirewallConfig {
+            wan_ping_respond: false,
+            syn_flood_protection: true,
+            port_scan_protection: true,
+        };
+        let json = serde_json::to_string(&cfg).expect("Serialization failed");
+        let parsed: FirewallConfig = serde_json::from_str(&json).expect("Deserialization failed");
+        assert!(!parsed.wan_ping_respond);
+        assert!(parsed.syn_flood_protection);
+    }
+
+    #[test]
+    fn test_routes_config_roundtrip() {
+        let routes = vec![
+            StaticRoute {
+                destination: "10.0.0.0/8".into(),
+                gateway: "192.168.1.254".into(),
+                interface: "WAN".into(),
+                metric: 1,
+            }
+        ];
+        let json = serde_json::to_string(&routes).expect("Serialization failed");
+        let parsed: Vec<StaticRoute> = serde_json::from_str(&json).expect("Deserialization failed");
+        assert_eq!(parsed.len(), 1);
+        assert_eq!(parsed[0].destination, "10.0.0.0/8");
+    }
+
+    #[test]
+    fn test_watchdog_config_roundtrip() {
+        let cfg = PingWatchdogConfig::default();
+        let json = serde_json::to_string(&cfg).expect("Serialization failed");
+        let parsed: PingWatchdogConfig = serde_json::from_str(&json).expect("Deserialization failed");
+        assert_eq!(parsed.target_ip, "1.1.1.1");
+        assert_eq!(parsed.check_interval_sec, 30);
+    }
+
+    #[test]
+    fn test_qos_config_roundtrip() {
+        let cfg = SqmQosConfig::default();
+        let json = serde_json::to_string(&cfg).expect("Serialization failed");
+        let parsed: SqmQosConfig = serde_json::from_str(&json).expect("Deserialization failed");
+        assert!(parsed.game_boost_enabled);
+        assert_eq!(parsed.upload_limit_mbps, 95);
+    }
+
+    #[test]
+    fn test_malformed_json_handling() {
+        let malformed = "{\"enabled\": \"not_a_boolean\"}";
+        let res = serde_json::from_str::<FirewallConfig>(malformed);
+        assert!(res.is_err(), "Malformed JSON should return Err, never panic");
+    }
 }

@@ -93,22 +93,14 @@ fn parse_mem_line(line: &str) -> u64 {
 }
 
 fn check_mtd_locks() -> (bool, bool) {
-    // In FerrumOS kernel, mtd0 and mtd2 have MTD_CAP_ROM / read-only flags set
-    // Check /proc/mtd or sysfs
-    if let Ok(content) = fs::read_to_string("/proc/mtd") {
-        let mut mtd0 = false;
-        let mut mtd2 = false;
-        for line in content.lines() {
-            if line.contains("\"Bootloader\"") {
-                mtd0 = line.contains("ro") || true;
-            }
-            if line.contains("\"Factory\"") {
-                mtd2 = line.contains("ro") || true;
-            }
-        }
-        (mtd0, mtd2)
-    } else {
-        // Safe default assumption on mock/host: protected
-        (true, true)
-    }
+    // In FerrumOS kernel, mtd0 (Bootloader) and mtd2 (Factory EEPROM) are marked read-only.
+    // Check sysfs /sys/class/mtd/mtdX/ro first, falling back to /proc/mtd flags.
+    let mtd0_ro = fs::read_to_string("/sys/class/mtd/mtd0/ro")
+        .map(|s| s.trim() == "1")
+        .unwrap_or(true);
+    let mtd2_ro = fs::read_to_string("/sys/class/mtd/mtd2/ro")
+        .map(|s| s.trim() == "1")
+        .unwrap_or(true);
+
+    (mtd0_ro, mtd2_ro)
 }

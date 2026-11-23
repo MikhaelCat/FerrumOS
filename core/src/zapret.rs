@@ -89,3 +89,26 @@ pub fn build_nfqws_command(config: &ZapretConfig) -> Vec<String> {
 
     args
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_nfqws_command_defaults() {
+        let cfg = ZapretConfig::default();
+        let args = build_nfqws_command(&cfg);
+        assert!(args.contains(&"--dpi-desync=split2".to_string()));
+        assert!(args.contains(&"--dpi-desync-cutoff=d4".to_string()));
+        assert!(args.contains(&"--dpi-desync-any-protocol".to_string()));
+    }
+
+    #[test]
+    fn test_build_nfqws_command_custom_args() {
+        let mut cfg = ZapretConfig::default();
+        cfg.custom_nfqws_args = Some("--dpi-desync-ttl=5 --wf-l3=ipv4".into());
+        let args = build_nfqws_command(&cfg);
+        assert!(args.contains(&"--dpi-desync-ttl=5".to_string()));
+        assert!(args.contains(&"--wf-l3=ipv4".to_string()));
+    }
+}

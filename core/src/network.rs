@@ -2,6 +2,66 @@ use serde::{Deserialize, Serialize};
 use std::fs;
 use std::process::Command;
 
+// ==========================================
+// SECURITY VALIDATION & SANITIZATION HELPERS
+// ==========================================
+
+/// Strips dangerous characters (newlines, null bytes, quotes, semicolons, shell metas)
+/// to prevent command injection, CRLF injection, and config corruption.
+pub fn sanitize_clean_str(input: &str, max_len: usize) -> String {
+    input
+        .chars()
+        .filter(|&c| c != '\r' && c != '\n' && c != '\0' && c != '"' && c != '\'' && c != ';' && c != '`' && c != '$')
+        .take(max_len)
+        .collect()
+}
+
+/// Checks if string is a valid IPv4 address (e.g. 192.168.1.1)
+pub fn is_valid_ipv4(ip: &str) -> bool {
+    let parts: Vec<&str> = ip.split('.').collect();
+    if parts.len() != 4 {
+        return false;
+    }
+    for p in parts {
+        match p.parse::<u8>() {
+            Ok(_) => {},
+            Err(_) => return false,
+        }
+    }
+    true
+}
+
+/// Checks if string is a valid CIDR network (e.g. 10.0.0.0/8 or 192.168.1.0/24)
+pub fn is_valid_cidr(cidr: &str) -> bool {
+    let parts: Vec<&str> = cidr.split('/').collect();
+    if parts.len() == 1 {
+        return is_valid_ipv4(parts[0]);
+    } else if parts.len() == 2 {
+        let ip_valid = is_valid_ipv4(parts[0]);
+        let mask_valid = parts[1].parse::<u8>().map(|m| m <= 32).unwrap_or(false);
+        return ip_valid && mask_valid;
+    }
+    false
+}
+
+/// Validates target host for diagnostics: rejects flags (-...), enforces safe alphanumeric/dot/dash/colon
+pub fn is_valid_diagnostic_target(target: &str) -> bool {
+    let trimmed = target.trim();
+    if trimmed.is_empty() || trimmed.len() > 253 {
+        return false;
+    }
+    if trimmed.starts_with('-') || trimmed.contains("..") {
+        return false;
+    }
+    trimmed.chars().all(|c| c.is_alphanumeric() || c == '.' || c == '-' || c == ':')
+}
+
+/// Validates MAC address format (00:11:22:33:44:55 or 00-11-22-33-44-55)
+pub fn is_valid_mac(mac: &str) -> bool {
+    let clean = mac.replace([':', '-'], "");
+    clean.len() == 12 && clean.chars().all(|c| c.is_ascii_hexdigit())
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct NetworkInterface {
     pub name: String,
@@ -313,6 +373,7 @@ pub fn apply_lan_config(cfg: &LanDhcpConfig) -> Result<(), String> {
         return Ok(());
     }
 
+    let safe_domain = sanitize_clean_str(&cfg.domain_name, 64);
     let mut dhcp_conf = format!(
         "# FerrumOS DHCP Server Configuration\n\
         interface=br0\n\
@@ -321,16 +382,17 @@ pub fn apply_lan_config(cfg: &LanDhcpConfig) -> Result<(), String> {
         dhcp-option=option:dns-server,{}\n\
         domain={}\n",
         cfg.dhcp_start, cfg.dhcp_end, cfg.lan_netmask, cfg.lease_time_hours,
-        cfg.lan_ip, cfg.lan_ip, cfg.domain_name
+        cfg.lan_ip, cfg.lan_ip, safe_domain
     );
 
     for lease in &cfg.static_leases {
-        if !lease.mac.is_empty() && !lease.ip.is_empty() {
+        let safe_mac = sanitize_clean_str(&lease.mac, 17);
+        let safe_ip = sanitize_clean_str(&lease.ip, 15);
+        let safe_name = sanitize_clean_str(&lease.hostname, 32);
+        if is_valid_mac(&safe_mac) && is_valid_ipv4(&safe_ip) {
             dhcp_conf.push_str(&format!(
                 "dhcp-host={},{},{}\n",
-                lease.mac.trim(),
-                lease.ip.trim(),
-                lease.hostname.trim()
+                safe_mac, safe_ip, safe_name
             ));
         }
     }
@@ -412,6 +474,13 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
     let wmm_val = if cfg.wmm_qos { 1 } else { 0 };
     let hide_2g = if cfg.wifi_2g_hidden { 1 } else { 0 };
 
+    let safe_ssid_2g = sanitize_clean_str(&cfg.wifi_2g_ssid, 32);
+    let safe_pass_2g = sanitize_clean_str(&cfg.wifi_2g_password, 64);
+    let safe_ssid_5g = sanitize_clean_str(&cfg.wifi_5g_ssid, 32);
+    let safe_pass_5g = sanitize_clean_str(&cfg.wifi_5g_password, 64);
+    let safe_guest_ssid = sanitize_clean_str(&cfg.guest_ssid, 32);
+    let safe_guest_pass = sanitize_clean_str(&cfg.guest_password, 64);
+
     let dat_2g = format!(
         "# FerrumOS MT7620 2.4GHz High-Performance Driver Profile\n\
         Default\n\
@@ -466,10 +535,10 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         Dot11vEnable={dot11v}\n\
         GreenAP=0\n",
         bssid_num = if cfg.guest_enabled { 2 } else { 1 },
-        ssid1 = cfg.wifi_2g_ssid,
-        ssid2 = if cfg.guest_enabled { &cfg.guest_ssid } else { "" },
-        pass1 = cfg.wifi_2g_password,
-        pass2 = if cfg.guest_enabled { &cfg.guest_password } else { "" },
+        ssid1 = safe_ssid_2g,
+        ssid2 = if cfg.guest_enabled { &safe_guest_ssid } else { "" },
+        pass1 = safe_pass_2g,
+        pass2 = if cfg.guest_enabled { &safe_guest_pass } else { "" },
         pmf = cfg.wifi_2g_pmf,
         channel = cfg.wifi_2g_channel,
         auto_chan = if cfg.wifi_2g_channel == 0 { 2 } else { 0 },
@@ -549,10 +618,10 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         IEEE80211H=0\n\
         RDRegion=CE\n",
         bssid_num = if cfg.guest_enabled { 2 } else { 1 },
-        ssid1 = cfg.wifi_5g_ssid,
-        ssid2 = if cfg.guest_enabled { &cfg.guest_ssid } else { "" },
-        pass1 = cfg.wifi_5g_password,
-        pass2 = if cfg.guest_enabled { &cfg.guest_password } else { "" },
+        ssid1 = safe_ssid_5g,
+        ssid2 = if cfg.guest_enabled { &safe_guest_ssid } else { "" },
+        pass1 = safe_pass_5g,
+        pass2 = if cfg.guest_enabled { &safe_guest_pass } else { "" },
         pmf = cfg.wifi_5g_pmf,
         channel = cfg.wifi_5g_channel,
         auto_chan = if cfg.wifi_5g_channel == 0 { 2 } else { 0 },
@@ -593,6 +662,8 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
 
 /// Applies DNS & DOH configuration, generating dnsmasq and iptables redirection
 pub fn apply_dns_config(cfg: &DnsAdvancedConfig) -> Result<(), String> {
+    let safe_dns1 = sanitize_clean_str(&cfg.primary_dns, 64);
+    let safe_dns2 = sanitize_clean_str(&cfg.secondary_dns, 64);
     let mut dnsmasq_conf = format!(
         "# FerrumOS Advanced DNS Configuration\n\
         no-resolv\n\
@@ -601,7 +672,7 @@ pub fn apply_dns_config(cfg: &DnsAdvancedConfig) -> Result<(), String> {
         cache-size=1024\n\
         domain-needed\n\
         bogus-priv\n",
-        cfg.primary_dns, cfg.secondary_dns
+        safe_dns1, safe_dns2
     );
 
     if cfg.anti_dns_rebind {
@@ -609,7 +680,10 @@ pub fn apply_dns_config(cfg: &DnsAdvancedConfig) -> Result<(), String> {
     }
 
     for host in &cfg.custom_hosts {
-        dnsmasq_conf.push_str(&format!("address=/{}\n", host));
+        let safe_host = sanitize_clean_str(host, 128);
+        if !safe_host.is_empty() {
+            dnsmasq_conf.push_str(&format!("address=/{}\n", safe_host));
+        }
     }
 
     let _ = fs::create_dir_all("/etc/dnsmasq.d");
@@ -636,6 +710,10 @@ pub fn apply_dns_config(cfg: &DnsAdvancedConfig) -> Result<(), String> {
 pub fn apply_wan_config(cfg: &WanConfig) -> Result<(), String> {
     // Port Forwarding rules
     for pf in &cfg.port_forwards {
+        let safe_ip = sanitize_clean_str(&pf.int_ip, 15);
+        if !is_valid_ipv4(&safe_ip) || pf.ext_port == 0 || pf.int_port == 0 {
+            continue;
+        }
         let proto = match pf.proto.to_uppercase().as_str() {
             "UDP" => "udp",
             "BOTH" => "all",
@@ -645,7 +723,7 @@ pub fn apply_wan_config(cfg: &WanConfig) -> Result<(), String> {
             .args([
                 "-t", "nat", "-A", "PREROUTING", "-i", "eth2.2", "-p", proto,
                 "--dport", &pf.ext_port.to_string(),
-                "-j", "DNAT", "--to-destination", &format!("{}:{}", pf.int_ip, pf.int_port)
+                "-j", "DNAT", "--to-destination", &format!("{}:{}", safe_ip, pf.int_port)
             ])
             .output();
     }
@@ -1130,9 +1208,14 @@ pub struct StaticRoute {
 
 pub fn apply_static_routes(routes: &[StaticRoute]) -> Result<(), String> {
     for r in routes {
+        let safe_dest = sanitize_clean_str(&r.destination, 32);
+        let safe_gw = sanitize_clean_str(&r.gateway, 15);
+        if !is_valid_cidr(&safe_dest) || !is_valid_ipv4(&safe_gw) {
+            continue;
+        }
         let iface = if r.interface.to_uppercase() == "LAN" { "br0" } else { "eth2.2" };
         let _ = Command::new("ip")
-            .args(["route", "add", &r.destination, "via", &r.gateway, "dev", iface, "metric", &r.metric.to_string()])
+            .args(["route", "add", &safe_dest, "via", &safe_gw, "dev", iface, "metric", &r.metric.to_string()])
             .output();
     }
     Ok(())
@@ -1160,11 +1243,11 @@ pub fn get_switch_port_status() -> Vec<SwitchPortStatus> {
 
 // --- 5.5. Wake-on-LAN (WoL) Pure Rust Engine ---
 pub fn send_wake_on_lan(mac_str: &str) -> Result<(), String> {
-    let clean_mac = mac_str.replace([':', '-'], "");
-    if clean_mac.len() != 12 {
-        return Err("Неверная длина MAC-адреса (требуется 12 hex символов)".into());
+    if !is_valid_mac(mac_str) {
+        return Err("Неверный формат MAC-адреса (требуется 12 шестнадцатеричных символов, например 00:11:22:33:44:55)".into());
     }
 
+    let clean_mac = mac_str.replace([':', '-'], "");
     let mut mac_bytes = [0u8; 6];
     for i in 0..6 {
         mac_bytes[i] = u8::from_str_radix(&clean_mac[i * 2..i * 2 + 2], 16)
@@ -1210,6 +1293,15 @@ impl Default for PingWatchdogConfig {
 }
 
 pub fn apply_watchdog_config(cfg: &PingWatchdogConfig) -> Result<(), String> {
+    let safe_target = sanitize_clean_str(&cfg.target_ip, 64);
+    if !is_valid_diagnostic_target(&safe_target) {
+        return Err("Недопустимый адрес хоста для Ping Watchdog".into());
+    }
+
+    let safe_action = if cfg.action == "reboot_router" { "reboot_router" } else { "restart_wan" };
+    let safe_threshold = cfg.failure_threshold.clamp(1, 50);
+    let safe_interval = cfg.check_interval_sec.clamp(5, 3600);
+
     let script = format!(
         "#!/bin/sh\n\
         TARGET=\"{}\"\n\
@@ -1232,7 +1324,7 @@ pub fn apply_watchdog_config(cfg: &PingWatchdogConfig) -> Result<(), String> {
             fi\n\
             sleep {}\n\
         done\n",
-        cfg.target_ip, cfg.failure_threshold, cfg.action, cfg.check_interval_sec
+        safe_target, safe_threshold, safe_action, safe_interval
     );
 
     let _ = fs::write("/tmp/watchdog.sh", script);
@@ -1269,10 +1361,17 @@ pub fn apply_ddns_config(cfg: &DdnsConfig) -> Result<(), String> {
         return Ok(());
     }
 
+    let safe_domain = sanitize_clean_str(&cfg.domain, 128);
+    let safe_token = sanitize_clean_str(&cfg.token_or_pass, 128);
+
+    if safe_domain.is_empty() || safe_token.is_empty() || safe_domain.starts_with('-') || safe_token.starts_with('-') {
+        return Err("Недопустимые параметры DDNS".into());
+    }
+
     if cfg.service == "duckdns" {
         let url = format!(
             "https://www.duckdns.org/update?domains={}&token={}&ip=",
-            cfg.domain, cfg.token_or_pass
+            safe_domain, safe_token
         );
         let _ = Command::new("curl").args(["-s", "-k", &url]).spawn();
     }
@@ -1295,20 +1394,27 @@ pub struct DiagnosticResp {
 }
 
 pub fn run_diagnostic(req: &DiagnosticReq) -> DiagnosticResp {
-    let clean_target: String = req.target.chars().filter(|c| c.is_alphanumeric() || *c == '.' || *c == '-' || *c == ':').collect();
-    if clean_target.is_empty() {
+    if !is_valid_diagnostic_target(&req.target) {
         return DiagnosticResp {
             tool: req.tool.clone(),
             target: req.target.clone(),
-            output: "Ошибка: некорректный целевой адрес".into(),
+            output: "Ошибка: недопустимый целевой адрес (запрещены спецсимволы, флаги параметров и длина более 253 символов)".into(),
             success: false,
         };
     }
 
+    let clean_target = req.target.trim().to_string();
+
     let output = match req.tool.as_str() {
         "traceroute" => Command::new("traceroute").args(["-m", "15", "-q", "1", &clean_target]).output(),
         "nslookup" => Command::new("nslookup").arg(&clean_target).output(),
-        _ => Command::new("ping").args(["-c", "4", &clean_target]).output(),
+        "ping" => Command::new("ping").args(["-c", "4", &clean_target]).output(),
+        _ => return DiagnosticResp {
+            tool: req.tool.clone(),
+            target: clean_target,
+            output: "Ошибка: неподдерживаемая утилита диагностики".into(),
+            success: false,
+        },
     };
 
     match output {
@@ -1329,5 +1435,101 @@ pub fn run_diagnostic(req: &DiagnosticReq) -> DiagnosticResp {
             output: format!("Ошибка выполнения утилиты {}: {}", req.tool, e),
             success: false,
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sanitize_clean_str() {
+        let dirty = "admin\nrm -rf /; `whoami` $PATH 'secret' \"quoted\"\0test";
+        let cleaned = sanitize_clean_str(dirty, 50);
+        assert!(!cleaned.contains('\n'));
+        assert!(!cleaned.contains(';'));
+        assert!(!cleaned.contains('`'));
+        assert!(!cleaned.contains('$'));
+        assert!(!cleaned.contains('\''));
+        assert!(!cleaned.contains('"'));
+        assert!(!cleaned.contains('\0'));
+        assert_eq!(cleaned, "adminrm -rf / whoami PATH secret quotedtest");
+    }
+
+    #[test]
+    fn test_is_valid_ipv4() {
+        assert!(is_valid_ipv4("192.168.1.1"));
+        assert!(is_valid_ipv4("10.0.0.1"));
+        assert!(is_valid_ipv4("255.255.255.255"));
+        assert!(is_valid_ipv4("0.0.0.0"));
+
+        assert!(!is_valid_ipv4("256.0.0.1"));
+        assert!(!is_valid_ipv4("192.168.1"));
+        assert!(!is_valid_ipv4("192.168.1.1.1"));
+        assert!(!is_valid_ipv4("abc.def.ghi.jkl"));
+        assert!(!is_valid_ipv4("192.168.1.1;reboot"));
+    }
+
+    #[test]
+    fn test_is_valid_cidr() {
+        assert!(is_valid_cidr("10.0.0.0/8"));
+        assert!(is_valid_cidr("192.168.1.0/24"));
+        assert!(is_valid_cidr("172.16.0.0/16"));
+        assert!(is_valid_cidr("1.1.1.1/32"));
+        assert!(is_valid_cidr("192.168.1.1"));
+
+        assert!(!is_valid_cidr("10.0.0.0/33"));
+        assert!(!is_valid_cidr("10.0.0.0/-1"));
+        assert!(!is_valid_cidr("300.0.0.0/24"));
+        assert!(!is_valid_cidr("10.0.0.0/24;rm"));
+    }
+
+    #[test]
+    fn test_is_valid_diagnostic_target() {
+        assert!(is_valid_diagnostic_target("8.8.8.8"));
+        assert!(is_valid_diagnostic_target("google.com"));
+        assert!(is_valid_diagnostic_target("cloudflare-dns.com"));
+        assert!(is_valid_diagnostic_target("2606:4700:4700::1111"));
+
+        // Attack patterns MUST be rejected
+        assert!(!is_valid_diagnostic_target("-c 100"));
+        assert!(!is_valid_diagnostic_target("--help"));
+        assert!(!is_valid_diagnostic_target("8.8.8.8; reboot"));
+        assert!(!is_valid_diagnostic_target("8.8.8.8 && ls"));
+        assert!(!is_valid_diagnostic_target("`id`"));
+        assert!(!is_valid_diagnostic_target("../../../etc/passwd"));
+        assert!(!is_valid_diagnostic_target(""));
+    }
+
+    #[test]
+    fn test_is_valid_mac() {
+        assert!(is_valid_mac("AA:BB:CC:DD:EE:FF"));
+        assert!(is_valid_mac("aa:bb:cc:dd:ee:ff"));
+        assert!(is_valid_mac("00-11-22-33-44-55"));
+        assert!(is_valid_mac("001122334455"));
+
+        assert!(!is_valid_mac("GG:HH:II:JJ:KK:LL"));
+        assert!(!is_valid_mac("00:11:22:33:44"));
+        assert!(!is_valid_mac("00:11:22:33:44:55:66"));
+        assert!(!is_valid_mac("AA:BB:CC:DD:EE:F;reboot"));
+    }
+
+    #[test]
+    fn test_send_wake_on_lan_validation() {
+        assert!(send_wake_on_lan("AA:BB:CC:DD:EE:FF").is_ok());
+        assert!(send_wake_on_lan("invalid-mac").is_err());
+        assert!(send_wake_on_lan("").is_err());
+        assert!(send_wake_on_lan("00:11:22:33:44").is_err());
+    }
+
+    #[test]
+    fn test_diagnostic_rejected_flags() {
+        let req = DiagnosticReq {
+            tool: "ping".into(),
+            target: "-n 100".into(),
+        };
+        let res = run_diagnostic(&req);
+        assert!(!res.success);
+        assert!(res.output.contains("недопустимый"));
     }
 }
