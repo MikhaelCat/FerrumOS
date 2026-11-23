@@ -1,3 +1,30 @@
+// Unified Feedback & Timed Status Helper (Auto-clear after duration)
+function setTimedStatus(elementOrId, text, type = "success", duration = 3500) {
+    const el = typeof elementOrId === "string" ? document.getElementById(elementOrId) : elementOrId;
+    if (!el) return;
+    if (el._statusTimer) {
+        clearTimeout(el._statusTimer);
+        el._statusTimer = null;
+    }
+    el.textContent = text;
+    if (type === "success") {
+        el.className = "status-badge status-badge-success align-self-center";
+    } else if (type === "error") {
+        el.className = "status-badge status-badge-error align-self-center";
+    } else if (type === "info" || type === "loading") {
+        el.className = "status-badge status-badge-info align-self-center";
+    } else {
+        el.className = "status-badge align-self-center";
+    }
+    if (duration > 0) {
+        el._statusTimer = setTimeout(() => {
+            el.textContent = "";
+            el.className = "align-self-center";
+            el._statusTimer = null;
+        }, duration);
+    }
+}
+
 // FerrumOS Modern Client Application (Zero Dependencies, Ultra Fast)
 document.addEventListener("DOMContentLoaded", () => {
     initAuthManager();
@@ -324,10 +351,10 @@ function initProxyManager() {
             });
             const data = await res.json();
             if (data.success && data.latency_ms !== null) {
-                pingResult.textContent = `⚡ Пинг: ${data.latency_ms} ms (Доступен)`;
+                pingResult.textContent = `Задержка: ${data.latency_ms} ms (Доступен)`;
                 pingResult.className = "text-xs text-emerald align-self-center";
             } else {
-                pingResult.textContent = `❌ Недоступен (${data.error || "Таймаут"})`;
+                pingResult.textContent = `Недоступен (${data.error || "Превышен таймаут"})`;
                 pingResult.className = "text-xs text-rose align-self-center";
             }
         } catch (e) {
@@ -350,7 +377,7 @@ function initProxyManager() {
 
         applyBtn.textContent = "Применение...";
         const statusSpan = document.getElementById("proxy-action-status");
-        statusSpan.textContent = "Запись маршрутов и запуск sing-box...";
+        setTimedStatus(statusSpan, "Применение маршрутов и запуск туннеля...", "info", 0);
 
         try {
             const res = await fetch("/api/v1/proxy/apply", {
@@ -365,19 +392,17 @@ function initProxyManager() {
             });
             const data = await res.json();
             if (data.success) {
-                statusSpan.textContent = "✅ Туннель успешно активирован!";
-                statusSpan.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(statusSpan, "Туннель успешно активирован", "success", 3500);
                 document.getElementById("proxy-status-text").textContent = "Активен (Подключено)";
                 document.getElementById("proxy-active-mode-badge").textContent = mode === "smart_ru" ? "Smart RU" : mode.toUpperCase();
                 document.getElementById("proxy-pill").textContent = "Active";
             } else {
-                statusSpan.textContent = "❌ " + data.message;
-                statusSpan.className = "text-xs text-rose align-self-center";
+                setTimedStatus(statusSpan, data.message || "Ошибка запуска туннеля", "error", 4000);
             }
         } catch (e) {
-            statusSpan.textContent = "Ошибка: " + e.message;
+            setTimedStatus(statusSpan, "Ошибка: " + e.message, "error", 4000);
         } finally {
-            applyBtn.textContent = "🚀 Применить и активировать туннель";
+            applyBtn.textContent = "Применить конфигурацию туннеля";
         }
     });
 }
@@ -467,22 +492,20 @@ function initZapretManager() {
             });
             const data = await res.json();
             if (saveStatus) {
-                saveStatus.textContent = data.success ? "✅ " + data.message : "❌ " + data.message;
-                saveStatus.className = "text-xs align-self-center " + (data.success ? "text-emerald" : "text-rose");
+                setTimedStatus(saveStatus, data.message || (data.success ? "Параметры Zapret сохранены" : "Ошибка сохранения"), data.success ? "success" : "error", 3500);
             }
         } catch (e) {
             if (saveStatus) {
-                saveStatus.textContent = "Ошибка: " + e.message;
-                saveStatus.className = "text-xs align-self-center text-rose";
+                setTimedStatus(saveStatus, "Ошибка: " + e.message, "error", 4000);
             }
         } finally {
-            saveBtn.textContent = "💾 Применить и сохранить настройки Zapret";
+            saveBtn.textContent = "Сохранить параметры Zapret";
         }
     });
 
     // Auto-probe
     probeBtn?.addEventListener("click", async () => {
-        probeBtn.textContent = "⏳ Тестирование...";
+        probeBtn.textContent = "Тестирование...";
         probeBtn.disabled = true;
         try {
             const res = await fetch("/api/v1/zapret/probe", {
@@ -524,7 +547,7 @@ function initZapretManager() {
         } catch (e) {
             alert("Ошибка при тестировании стратегий: " + e.message);
         } finally {
-            probeBtn.textContent = "⚡ Запустить тест стратегий";
+            probeBtn.textContent = "Запустить тест стратегий";
             probeBtn.disabled = false;
         }
     });
@@ -558,9 +581,10 @@ function initWifiManager() {
                 textSpan.textContent = mac;
                 tag.appendChild(textSpan);
 
-                const delBtn = document.createElement("span");
-                delBtn.textContent = "×";
-                delBtn.style.cssText = "cursor:pointer; color:#ef4444; font-weight:bold; font-size:14px; line-height:1;";
+                const delBtn = document.createElement("button");
+                delBtn.type = "button";
+                delBtn.className = "btn btn-xs btn-outline-danger";
+                delBtn.textContent = "Удалить";
                 delBtn.title = "Удалить MAC";
                 delBtn.addEventListener("click", () => {
                     currentWifiAclList.splice(idx, 1);
@@ -725,7 +749,7 @@ function initWifiManager() {
         };
 
         saveBtn.textContent = "Применение к радиомодулям...";
-        statusSpan.textContent = "Запись RT2860AP.dat и iNIC_ap.dat...";
+        setTimedStatus(statusSpan, "Запись параметров во Flash-память...", "info", 0);
 
         try {
             const res = await fetch("/api/v1/wifi/config", {
@@ -735,16 +759,14 @@ function initWifiManager() {
             });
             const data = await res.json();
             if (data.success) {
-                statusSpan.textContent = "✅ Настройки Wi-Fi применены и сохранены в Flash!";
-                statusSpan.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(statusSpan, "Настройки Wi-Fi сохранены во Flash-память", "success", 3500);
             } else {
-                statusSpan.textContent = "❌ " + data.message;
-                statusSpan.className = "text-xs text-rose align-self-center";
+                setTimedStatus(statusSpan, data.message || "Ошибка запуска туннеля", "error", 4000);
             }
         } catch (e) {
-            statusSpan.textContent = "Ошибка сохранения: " + e.message;
+            setTimedStatus(statusSpan, "Ошибка сохранения: " + e.message, "error", 4000);
         } finally {
-            saveBtn.textContent = "💾 Применить и сохранить настройки Wi-Fi";
+            saveBtn.textContent = "Сохранить параметры Wi-Fi";
         }
     });
 }
@@ -829,16 +851,14 @@ function initNetworkManager() {
             });
             const data = await res.json();
             if (data.success) {
-                dnsStatusSpan.textContent = "✅ Настройки DNS сохранены и применены!";
-                dnsStatusSpan.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(dnsStatusSpan, "Настройки DNS сохранены и применены", "success", 3500);
             } else {
-                dnsStatusSpan.textContent = "❌ " + data.message;
-                dnsStatusSpan.className = "text-xs text-rose align-self-center";
+                setTimedStatus(dnsStatusSpan, data.message || "Ошибка сохранения", "error", 4000);
             }
         } catch (e) {
-            dnsStatusSpan.textContent = "Ошибка: " + e.message;
+            setTimedStatus(dnsStatusSpan, "Ошибка: " + e.message, "error", 4000);
         } finally {
-            btnSaveDns.textContent = "💾 Сохранить настройки DNS";
+            btnSaveDns.textContent = "Сохранить параметры DNS";
         }
     });
 
@@ -925,16 +945,14 @@ function initNetworkManager() {
             const data = await res.json();
             if (data.success) {
                 currentWanConfig = payload;
-                wanStatusSpan.textContent = "✅ Настройки WAN сохранены!";
-                wanStatusSpan.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(wanStatusSpan, "Настройки WAN сохранены", "success", 3500);
             } else {
-                wanStatusSpan.textContent = "❌ " + data.message;
-                wanStatusSpan.className = "text-xs text-rose align-self-center";
+                setTimedStatus(wanStatusSpan, data.message || "Ошибка сохранения", "error", 4000);
             }
         } catch (e) {
-            wanStatusSpan.textContent = "Ошибка: " + e.message;
+            setTimedStatus(wanStatusSpan, "Ошибка: " + e.message, "error", 4000);
         } finally {
-            btnSaveWan.textContent = "💾 Сохранить настройки WAN";
+            btnSaveWan.textContent = "Сохранить параметры WAN";
         }
     });
 
@@ -961,7 +979,7 @@ function initNetworkManager() {
                 <td><input type="text" class="form-control text-xs lease-mac" value="${lease.mac || ''}" placeholder="AA:BB:CC:DD:EE:FF"></td>
                 <td><input type="text" class="form-control text-xs lease-ip" value="${lease.ip || ''}" placeholder="192.168.1.50"></td>
                 <td><input type="text" class="form-control text-xs lease-host" value="${lease.hostname || ''}" placeholder="Smart-TV"></td>
-                <td><button class="btn btn-sm btn-danger btn-del-lease" data-idx="${idx}">✕</button></td>
+                <td><button class="btn btn-xs btn-outline-danger btn-del-lease" data-idx="${idx}">Удалить</button></td>
             `;
             staticLeasesTbody.appendChild(tr);
         });
@@ -1030,16 +1048,14 @@ function initNetworkManager() {
             const data = await res.json();
             if (data.success) {
                 currentStaticLeases = leases;
-                lanStatusSpan.textContent = "✅ Настройки LAN и статические привязки сохранены!";
-                lanStatusSpan.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(lanStatusSpan, "Настройки LAN и статические привязки сохранены", "success", 3500);
             } else {
-                lanStatusSpan.textContent = "❌ " + data.message;
-                lanStatusSpan.className = "text-xs text-rose align-self-center";
+                setTimedStatus(lanStatusSpan, data.message || "Ошибка сохранения", "error", 4000);
             }
         } catch (e) {
-            lanStatusSpan.textContent = "Ошибка: " + e.message;
+            setTimedStatus(lanStatusSpan, "Ошибка: " + e.message, "error", 4000);
         } finally {
-            btnSaveLan.textContent = "💾 Сохранить настройки LAN & DHCP";
+            btnSaveLan.textContent = "Сохранить параметры LAN и DHCP";
         }
     });
 
@@ -1105,7 +1121,7 @@ function initNetworkManager() {
                 <td><input type="number" class="form-control text-xs pf-ext-port" value="${rule.ext_port || ''}" placeholder="8080"></td>
                 <td><input type="text" class="form-control text-xs pf-int-ip" value="${rule.int_ip || ''}" placeholder="192.168.1.10"></td>
                 <td><input type="number" class="form-control text-xs pf-int-port" value="${rule.int_port || ''}" placeholder="80"></td>
-                <td><button class="btn btn-sm btn-danger btn-del-pf" data-idx="${idx}">✕</button></td>
+                <td><button class="btn btn-xs btn-outline-danger btn-del-pf" data-idx="${idx}">Удалить</button></td>
             `;
             pfTableTbody.appendChild(tr);
         });
@@ -1156,16 +1172,14 @@ function initNetworkManager() {
             const data = await res.json();
             if (data.success) {
                 currentWanConfig = payload;
-                pfStatusSpan.textContent = "✅ Правила проброса портов успешно применены!";
-                pfStatusSpan.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(pfStatusSpan, "Правила проброса портов применены", "success", 3500);
             } else {
-                pfStatusSpan.textContent = "❌ " + data.message;
-                pfStatusSpan.className = "text-xs text-rose align-self-center";
+                setTimedStatus(pfStatusSpan, data.message || "Ошибка сохранения", "error", 4000);
             }
         } catch (e) {
-            pfStatusSpan.textContent = "Ошибка: " + e.message;
+            setTimedStatus(pfStatusSpan, "Ошибка: " + e.message, "error", 4000);
         } finally {
-            btnSavePf.textContent = "💾 Применить правила проброса портов";
+            btnSavePf.textContent = "Применить правила";
         }
     });
 
@@ -1182,17 +1196,17 @@ function initNetworkManager() {
             const ports = await res.json();
             switchPortsGrid.innerHTML = "";
             ports.forEach(p => {
-                const badgeClass = p.link_up ? "badge-emerald" : "badge-rose";
+                const statusClass = p.link_up ? "port-up" : "port-down";
+                const statusText = p.link_up ? "UP" : "DOWN";
                 const speedText = p.link_up ? `${p.speed_mbps} Mbps ${p.duplex}` : "Отключен";
-                const icon = p.link_up ? "🟢" : "⚫";
                 const div = document.createElement("div");
                 div.className = "card";
                 div.style.padding = "0.75rem";
                 div.style.textAlign = "center";
                 div.innerHTML = `
-                    <div style="font-size: 1.5rem; margin-bottom: 0.25rem;">${icon}</div>
-                    <div style="font-weight: 700; font-size: 0.85rem;">${p.port_name}</div>
-                    <div class="badge ${badgeClass}" style="margin-top: 0.35rem; font-size: 0.7rem;">${speedText}</div>
+                    <div style="margin-bottom: 0.4rem;"><span class="port-badge ${statusClass}">${statusText}</span></div>
+                    <div style="font-weight: 600; font-size: 0.85rem;">${p.port_name}</div>
+                    <div class="muted" style="margin-top: 0.25rem; font-size: 0.725rem; font-family: var(--font-mono);">${speedText}</div>
                 `;
                 switchPortsGrid.appendChild(div);
             });
@@ -1241,16 +1255,14 @@ function initNetworkManager() {
             });
             const data = await res.json();
             if (data.success) {
-                ipv6Status.textContent = "✅ Настройки IPv6 успешно сохранены!";
-                ipv6Status.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(ipv6Status, "Настройки IPv6 сохранены", "success", 3500);
             } else {
-                ipv6Status.textContent = "❌ " + data.message;
-                ipv6Status.className = "text-xs text-rose align-self-center";
+                setTimedStatus(ipv6Status, data.message || "Ошибка сохранения", "error", 4000);
             }
         } catch (e) {
-            ipv6Status.textContent = "Ошибка: " + e.message;
+            setTimedStatus(ipv6Status, "Ошибка: " + e.message, "error", 4000);
         } finally {
-            btnSaveIpv6.textContent = "💾 Сохранить настройки IPv6";
+            btnSaveIpv6.textContent = "Сохранить параметры IPv6";
         }
     });
 
@@ -1291,16 +1303,14 @@ function initNetworkManager() {
             });
             const data = await res.json();
             if (data.success) {
-                iptvStatus.textContent = "✅ Настройки IPTV и Udpxy применены!";
-                iptvStatus.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(iptvStatus, "Настройки IPTV и Udpxy применены", "success", 3500);
             } else {
-                iptvStatus.textContent = "❌ " + data.message;
-                iptvStatus.className = "text-xs text-rose align-self-center";
+                setTimedStatus(iptvStatus, data.message || "Ошибка сохранения", "error", 4000);
             }
         } catch (e) {
-            iptvStatus.textContent = "Ошибка: " + e.message;
+            setTimedStatus(iptvStatus, "Ошибка: " + e.message, "error", 4000);
         } finally {
-            btnSaveIptv.textContent = "💾 Применить настройки IPTV";
+            btnSaveIptv.textContent = "Сохранить параметры IPTV";
         }
     });
 
@@ -1338,16 +1348,14 @@ function initNetworkManager() {
             });
             const data = await res.json();
             if (data.success) {
-                fwStatus.textContent = "✅ Правила Firewall сохранены!";
-                fwStatus.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(fwStatus, "Правила безопасности сохранены", "success", 3500);
             } else {
-                fwStatus.textContent = "❌ " + data.message;
-                fwStatus.className = "text-xs text-rose align-self-center";
+                setTimedStatus(fwStatus, data.message || "Ошибка сохранения", "error", 4000);
             }
         } catch (e) {
-            fwStatus.textContent = "Ошибка: " + e.message;
+            setTimedStatus(fwStatus, "Ошибка: " + e.message, "error", 4000);
         } finally {
-            btnSaveFw.textContent = "💾 Сохранить правила Firewall";
+            btnSaveFw.textContent = "Сохранить правила безопасности";
         }
     });
 
@@ -1379,7 +1387,7 @@ function initNetworkManager() {
                     </select>
                 </td>
                 <td><input type="number" class="form-control text-xs r-metric" value="${r.metric !== undefined ? r.metric : 1}" style="width: 70px;"></td>
-                <td><button class="btn btn-sm btn-danger btn-del-route" data-idx="${idx}">✕</button></td>
+                <td><button class="btn btn-xs btn-outline-danger btn-del-route" data-idx="${idx}">Удалить</button></td>
             `;
             routesTbody.appendChild(tr);
         });
@@ -1429,16 +1437,14 @@ function initNetworkManager() {
             const data = await res.json();
             if (data.success) {
                 currentRoutes = routes;
-                routesStatus.textContent = "✅ Статические маршруты успешно применены!";
-                routesStatus.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(routesStatus, "Статические маршруты применены", "success", 3500);
             } else {
-                routesStatus.textContent = "❌ " + data.message;
-                routesStatus.className = "text-xs text-rose align-self-center";
+                setTimedStatus(routesStatus, data.message || "Ошибка сохранения", "error", 4000);
             }
         } catch (e) {
-            routesStatus.textContent = "Ошибка: " + e.message;
+            setTimedStatus(routesStatus, "Ошибка: " + e.message, "error", 4000);
         } finally {
-            btnSaveRoutes.textContent = "💾 Применить маршруты";
+            btnSaveRoutes.textContent = "Применить маршруты";
         }
     });
 }
@@ -1493,16 +1499,14 @@ function initGameBoostManager() {
             });
             const data = await res.json();
             if (data.success) {
-                qosStatusSpan.textContent = "✅ Режим ROG Game Boost активирован!";
-                qosStatusSpan.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(qosStatusSpan, "Параметры SQM QoS применены", "success", 3500);
             } else {
-                qosStatusSpan.textContent = "❌ " + data.message;
-                qosStatusSpan.className = "text-xs text-rose align-self-center";
+                setTimedStatus(qosStatusSpan, data.message || "Ошибка сохранения", "error", 4000);
             }
         } catch (e) {
-            qosStatusSpan.textContent = "Ошибка: " + e.message;
+            setTimedStatus(qosStatusSpan, "Ошибка: " + e.message, "error", 4000);
         } finally {
-            btnSaveQos.textContent = "💾 Применить настройки Game Boost";
+            btnSaveQos.textContent = "Применить параметры SQM";
         }
     });
 
@@ -1529,7 +1533,7 @@ function initGameBoostManager() {
                         <td class="text-emerald font-bold">${rxDisplay}</td>
                         <td class="text-purple font-bold">${txDisplay}</td>
                         <td class="muted text-xs">${totalMb}</td>
-                        <td>${c.is_gaming ? '<span class="badge-pill" style="background:#8b5cf6; color:#fff;">🎮 Game Boost</span>' : '<span class="muted text-xs">Обычный</span>'}</td>
+                        <td>${c.is_gaming ? '<span class="badge-pill">SQM Приоритет</span>' : '<span class="muted text-xs">Стандартный</span>'}</td>
                     `;
                     trafficTbody.appendChild(tr);
                 });
@@ -1627,7 +1631,7 @@ function initRadarManager() {
         } catch (e) {
             console.warn("Wi-Fi scan failed", e);
         } finally {
-            if (btnScan) btnScan.textContent = "⚡ Сканировать эфир";
+            if (btnScan) btnScan.textContent = "Сканировать эфир";
         }
     }
 
@@ -1640,14 +1644,14 @@ function initRadarManager() {
             const res = await fetch("/api/v1/wifi/acs/trigger", { method: "POST" });
             const data = await res.json();
             if (data.success && acsAlert && acsText) {
-                acsText.textContent = "🚀 " + data.message;
+                acsText.textContent = data.message;
                 acsAlert.classList.remove("d-none");
                 scanRadar();
             }
         } catch (e) {
             alert("Ошибка ACS: " + e.message);
         } finally {
-            btnAcs.textContent = "🚀 Оптимизировать каналы (ACS)";
+            btnAcs.textContent = "Оптимизировать каналы (ACS)";
         }
     });
 }
@@ -1676,16 +1680,14 @@ function initToolsManager() {
             });
             const data = await res.json();
             if (data.success) {
-                wolStatus.textContent = "✅ Magic packet отправлен!";
-                wolStatus.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(wolStatus, "Magic Packet успешно отправлен", "success", 3500);
             } else {
-                wolStatus.textContent = "❌ " + data.message;
-                wolStatus.className = "text-xs text-rose align-self-center";
+                setTimedStatus(wolStatus, data.message || "Ошибка отправки", "error", 4000);
             }
         } catch (e) {
-            wolStatus.textContent = "Ошибка: " + e.message;
+            setTimedStatus(wolStatus, "Ошибка: " + e.message, "error", 4000);
         } finally {
-            btnWol.textContent = "⚡ Разбудить устройство";
+            btnWol.textContent = "Отправить Magic Packet";
         }
     });
 
@@ -1726,11 +1728,10 @@ function initToolsManager() {
             });
             const data = await res.json();
             if (data.success) {
-                wdStatus.textContent = "✅ Сохранено";
-                wdStatus.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(wdStatus, "Параметры сохранены", "success", 3500);
             }
         } catch (e) {
-            wdStatus.textContent = "Ошибка: " + e.message;
+            setTimedStatus(wdStatus, "Ошибка: " + e.message, "error", 4000);
         }
     });
 
@@ -1768,11 +1769,10 @@ function initToolsManager() {
             });
             const data = await res.json();
             if (data.success) {
-                ddnsStatus.textContent = "✅ DDNS сохранен";
-                ddnsStatus.className = "text-xs text-emerald align-self-center";
+                setTimedStatus(ddnsStatus, "Параметры DDNS сохранены", "success", 3500);
             }
         } catch (e) {
-            ddnsStatus.textContent = "Ошибка: " + e.message;
+            setTimedStatus(ddnsStatus, "Ошибка: " + e.message, "error", 4000);
         }
     });
 
@@ -1787,7 +1787,7 @@ function initToolsManager() {
         if (!target) return;
         const tool = diagTool?.value || "ping";
 
-        btnRunDiag.textContent = "⏳ Выполнение...";
+        btnRunDiag.textContent = "Выполнение...";
         diagOutput.textContent = `Запуск ${tool} для ${target}... Пожалуйста, подождите.\n`;
 
         try {
@@ -1801,7 +1801,7 @@ function initToolsManager() {
         } catch (e) {
             diagOutput.textContent = "Ошибка выполнения: " + e.message;
         } finally {
-            btnRunDiag.textContent = "▶ Запустить";
+            btnRunDiag.textContent = "Выполнить диагностику";
         }
     });
 }
@@ -1860,8 +1860,7 @@ function initSystemManager() {
 
         if (new_password !== confirm_password) {
             if (statusPw) {
-                statusPw.textContent = "❌ Новые пароли не совпадают!";
-                statusPw.className = "text-xs text-rose align-self-center";
+                setTimedStatus(statusPw, "Новые пароли не совпадают", "error", 3500);
             }
             return;
         }
@@ -1875,20 +1874,17 @@ function initSystemManager() {
             const data = await res.json();
             if (data.success) {
                 if (statusPw) {
-                    statusPw.textContent = "✅ " + data.message;
-                    statusPw.className = "text-xs text-emerald align-self-center";
+                    setTimedStatus(statusPw, data.message || "Пароль успешно обновлен", "success", 3500);
                 }
                 formPw.reset();
             } else {
                 if (statusPw) {
-                    statusPw.textContent = "❌ " + data.message;
-                    statusPw.className = "text-xs text-rose align-self-center";
+                    setTimedStatus(statusPw, data.message || "Ошибка смены пароля", "error", 4000);
                 }
             }
         } catch (err) {
             if (statusPw) {
-                statusPw.textContent = "Ошибка: " + err.message;
-                statusPw.className = "text-xs text-rose align-self-center";
+                setTimedStatus(statusPw, "Ошибка: " + err.message, "error", 4000);
             }
         }
     });

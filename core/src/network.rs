@@ -442,7 +442,7 @@ pub struct DhcpLeaseEntry {
     pub expires: String,
 }
 
-/// Reads active DHCP leases from dnsmasq
+/// Reads active DHCP leases from dnsmasq or ARP table
 pub fn get_dhcp_leases() -> Vec<DhcpLeaseEntry> {
     let lease_paths = ["/tmp/dnsmasq.leases", "/var/lib/misc/dnsmasq.leases"];
     for path in lease_paths {
@@ -465,27 +465,32 @@ pub fn get_dhcp_leases() -> Vec<DhcpLeaseEntry> {
         }
     }
 
-    // Default mock data when running on dev host
-    vec![
-        DhcpLeaseEntry {
-            mac: "BC:D0:74:11:22:33".into(),
-            ip: "192.168.1.101".into(),
-            hostname: "iPhone-15-Pro".into(),
-            expires: "22h remaining".into(),
-        },
-        DhcpLeaseEntry {
-            mac: "E4:5F:01:44:55:66".into(),
-            ip: "192.168.1.102".into(),
-            hostname: "Samsung-SmartTV".into(),
-            expires: "23h remaining".into(),
-        },
-        DhcpLeaseEntry {
-            mac: "30:9C:23:77:88:99".into(),
-            ip: "192.168.1.105".into(),
-            hostname: "MacBook-Air-M2".into(),
-            expires: "18h remaining".into(),
-        },
-    ]
+    // Read real ARP table from /proc/net/arp
+    if let Ok(arp_content) = fs::read_to_string("/proc/net/arp") {
+        let mut result = Vec::new();
+        for line in arp_content.lines().skip(1) {
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            if parts.len() >= 4 {
+                let ip = parts[0];
+                let flags = parts[2];
+                let mac = parts[3];
+                if flags != "0x0" && mac != "00:00:00:00:00:00" && is_valid_mac(mac) {
+                    result.push(DhcpLeaseEntry {
+                        expires: "Active (ARP)".into(),
+                        mac: mac.to_string(),
+                        ip: ip.to_string(),
+                        hostname: format!("Host-{}", ip.replace('.', "-")),
+                    });
+                }
+            }
+        }
+        if !result.is_empty() {
+            return result;
+        }
+    }
+
+    // Zero mock devices: return empty list when no clients are connected
+    Vec::new()
 }
 
 /// Generates full MediaTek driver configuration for MT7620 (2.4 GHz) and MT7610E (5 GHz)
@@ -887,63 +892,8 @@ pub fn scan_wifi_networks() -> Vec<WifiNeighborNetwork> {
         }
     }
 
-    // Realistic neighboring network survey for UI visualization when on dev host
-    vec![
-        WifiNeighborNetwork {
-            ssid: "MTS_GPON_58A2".into(),
-            bssid: "E0:D9:E3:58:A2:01".into(),
-            channel: 1,
-            signal_dbm: -68,
-            security: "WPA2-PSK".into(),
-            band: "2.4 GHz".into(),
-            width_mhz: 20,
-        },
-        WifiNeighborNetwork {
-            ssid: "RTK-WiFi-771B".into(),
-            bssid: "74:B5:7E:77:1B:40".into(),
-            channel: 6,
-            signal_dbm: -54,
-            security: "WPA2/WPA3".into(),
-            band: "2.4 GHz".into(),
-            width_mhz: 40,
-        },
-        WifiNeighborNetwork {
-            ssid: "Beeline_Home_91".into(),
-            bssid: "50:D4:F7:91:02:11".into(),
-            channel: 6,
-            signal_dbm: -75,
-            security: "WPA2-PSK".into(),
-            band: "2.4 GHz".into(),
-            width_mhz: 20,
-        },
-        WifiNeighborNetwork {
-            ssid: "Keenetic-Ultra-99".into(),
-            bssid: "EC:43:F6:99:81:AA".into(),
-            channel: 11,
-            signal_dbm: -82,
-            security: "WPA3-SAE".into(),
-            band: "2.4 GHz".into(),
-            width_mhz: 20,
-        },
-        WifiNeighborNetwork {
-            ssid: "RTK-WiFi-5G-771B".into(),
-            bssid: "74:B5:7E:77:1B:41".into(),
-            channel: 36,
-            signal_dbm: -62,
-            security: "WPA2/WPA3".into(),
-            band: "5 GHz".into(),
-            width_mhz: 80,
-        },
-        WifiNeighborNetwork {
-            ssid: "Xiaomi_AX3000_5G".into(),
-            bssid: "88:C3:97:10:44:02".into(),
-            channel: 44,
-            signal_dbm: -74,
-            security: "WPA3-SAE".into(),
-            band: "5 GHz".into(),
-            width_mhz: 80,
-        },
-    ]
+    // Zero mock data: return empty vector when no neighboring networks detected
+    Vec::new()
 }
 
 fn parse_site_survey_output(text: &str, band: &str) -> Vec<WifiNeighborNetwork> {
@@ -1155,22 +1105,14 @@ pub fn get_clients_traffic(game_ips: &[String]) -> Vec<ClientTrafficStats> {
 
     for lease in leases {
         let is_game = game_ips.iter().any(|g| g == &lease.ip);
-        // Compute realistic traffic counters based on lease
-        let (rx_kbps, tx_kbps, total_rx, total_tx) = match lease.hostname.as_str() {
-            "iPhone-15-Pro" => (1450, 210, 1240.5, 312.1),
-            "Samsung-SmartTV" => (8200, 180, 5840.0, 110.4),
-            "MacBook-Air-M2" => (3500, 1200, 3100.8, 1420.0),
-            _ => (450, 90, 480.2, 85.0),
-        };
-
         stats.push(ClientTrafficStats {
             ip: lease.ip,
             mac: lease.mac,
             hostname: lease.hostname,
-            rx_rate_kbps: rx_kbps,
-            tx_rate_kbps: tx_kbps,
-            total_rx_mb: total_rx,
-            total_tx_mb: total_tx,
+            rx_rate_kbps: 0,
+            tx_rate_kbps: 0,
+            total_rx_mb: 0.0,
+            total_tx_mb: 0.0,
             is_gaming: is_game,
         });
     }
