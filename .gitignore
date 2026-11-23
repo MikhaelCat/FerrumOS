@@ -1,0 +1,15 @@
+# Target build outputs
+target/
+*.trx
+*.bin
+*.lzma
+
+# Temporary files
+*.tmp
+*.bak
+*~
+.DS_Store
+
+# Editor directories
+.vscode/
+.idea/
