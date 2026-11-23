@@ -91,10 +91,10 @@ fn parse_vless(raw: &str) -> Result<ProxyConfig, String> {
         return Err("VLESS URI missing UUID".into());
     }
 
-    let server = parsed
+    let raw_server = parsed
         .host_str()
-        .ok_or_else(|| "VLESS URI missing server host".to_string())?
-        .to_string();
+        .ok_or_else(|| "VLESS URI missing server host".to_string())?;
+    let server = raw_server.trim_start_matches('[').trim_end_matches(']').to_string();
 
     let server_port = parsed.port().unwrap_or(443);
 
@@ -159,17 +159,17 @@ fn parse_hysteria2(raw: &str) -> Result<ProxyConfig, String> {
     let parsed = Url::parse(&normalized).map_err(|e| format!("Invalid Hysteria2 URL: {}", e))?;
 
     let password = if !parsed.username().is_empty() {
-        parsed.username().to_string()
+        urlencoding_decode(parsed.username())
     } else if let Some(p) = parsed.password() {
-        p.to_string()
+        urlencoding_decode(p)
     } else {
         String::new()
     };
 
-    let server = parsed
+    let raw_server = parsed
         .host_str()
-        .ok_or_else(|| "Hysteria2 URI missing server host".to_string())?
-        .to_string();
+        .ok_or_else(|| "Hysteria2 URI missing server host".to_string())?;
+    let server = raw_server.trim_start_matches('[').trim_end_matches(']').to_string();
 
     let server_port = parsed.port().unwrap_or(443);
 

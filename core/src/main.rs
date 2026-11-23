@@ -1,11 +1,4 @@
-mod api;
-mod network;
-mod parser;
-mod singbox;
-mod system;
-mod zapret;
-
-use api::{handle_request, AppState};
+use ferrum_core::api::{handle_request, AppState};
 use std::env;
 use std::net::SocketAddr;
 use std::sync::Arc;

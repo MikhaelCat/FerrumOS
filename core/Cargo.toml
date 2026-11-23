@@ -12,6 +12,14 @@ url = "2.5"
 base64 = "0.22"
 tiny_http = "0.12"
 
+[lib]
+name = "ferrum_core"
+path = "src/lib.rs"
+
+[[bin]]
+name = "ferrum-core"
+path = "src/main.rs"
+
 [profile.release]
 opt-level = "z"        # Optimize for size
 lto = true             # Enable link-time optimization

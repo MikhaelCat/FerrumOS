@@ -70,6 +70,13 @@ pub struct InboundConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Hysteria2Obfs {
+    #[serde(rename = "type")]
+    pub obfs_type: String,
+    pub password: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutboundConfig {
     #[serde(rename = "type")]
     pub outbound_type: String,
@@ -91,6 +98,12 @@ pub struct OutboundConfig {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub network: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub packet_encoding: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub obfs: Option<Hysteria2Obfs>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub server_ports: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub up_mbps: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub down_mbps: Option<u32>,
@@ -103,6 +116,8 @@ pub struct TlsConfig {
     pub server_name: Option<String>,
     #[serde(default)]
     pub insecure: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub alpn: Option<Vec<String>>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub utls: Option<UtlsConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -349,6 +364,9 @@ pub fn generate_singbox_config(
                 tls: None,
                 transport: None,
                 network: None,
+                packet_encoding: None,
+                obfs: None,
+                server_ports: None,
                 up_mbps: None,
                 down_mbps: None,
             },
@@ -363,6 +381,9 @@ pub fn generate_singbox_config(
                 tls: None,
                 transport: None,
                 network: None,
+                packet_encoding: None,
+                obfs: None,
+                server_ports: None,
                 up_mbps: None,
                 down_mbps: None,
             },
@@ -377,6 +398,9 @@ pub fn generate_singbox_config(
                 tls: None,
                 transport: None,
                 network: None,
+                packet_encoding: None,
+                obfs: None,
+                server_ports: None,
                 up_mbps: None,
                 down_mbps: None,
             },
@@ -392,12 +416,14 @@ pub fn generate_singbox_config(
 fn build_proxy_outbound(proxy: &ProxyConfig) -> Result<OutboundConfig, String> {
     match proxy.proxy_type {
         ProxyType::Vless => {
+            let alpn = proxy.extra_params.get("alpn").map(|s| s.split(',').map(|p| p.trim().to_string()).collect::<Vec<_>>());
             let tls = if proxy.security.as_deref() == Some("reality") {
                 let pbk = proxy.public_key.clone().ok_or("Reality missing public key (pbk)")?;
                 Some(TlsConfig {
                     enabled: true,
                     server_name: proxy.sni.clone(),
                     insecure: proxy.insecure,
+                    alpn: alpn.clone(),
                     utls: Some(UtlsConfig {
                         enabled: true,
                         fingerprint: proxy.fingerprint.clone(),
@@ -413,6 +439,7 @@ fn build_proxy_outbound(proxy: &ProxyConfig) -> Result<OutboundConfig, String> {
                     enabled: true,
                     server_name: proxy.sni.clone(),
                     insecure: proxy.insecure,
+                    alpn: alpn.clone(),
                     utls: Some(UtlsConfig {
                         enabled: true,
                         fingerprint: proxy.fingerprint.clone(),
@@ -439,6 +466,8 @@ fn build_proxy_outbound(proxy: &ProxyConfig) -> Result<OutboundConfig, String> {
                 None
             };
 
+            let packet_encoding = proxy.extra_params.get("packetEncoding").cloned().or_else(|| Some("xudp".into()));
+
             Ok(OutboundConfig {
                 outbound_type: "vless".into(),
                 tag: proxy.tag.clone(),
@@ -450,11 +479,27 @@ fn build_proxy_outbound(proxy: &ProxyConfig) -> Result<OutboundConfig, String> {
                 tls,
                 transport,
                 network: None,
+                packet_encoding,
+                obfs: None,
+                server_ports: None,
                 up_mbps: None,
                 down_mbps: None,
             })
         }
         ProxyType::Hysteria2 => {
+            let alpn = proxy.extra_params.get("alpn").map(|s| s.split(',').map(|p| p.trim().to_string()).collect::<Vec<_>>());
+            let obfs = if let Some(obfs_type) = proxy.extra_params.get("obfs") {
+                let obfs_pw = proxy.extra_params.get("obfs-password").cloned().unwrap_or_default();
+                Some(Hysteria2Obfs {
+                    obfs_type: obfs_type.clone(),
+                    password: obfs_pw,
+                })
+            } else {
+                None
+            };
+            let server_ports = proxy.extra_params.get("mport").cloned()
+                .or_else(|| proxy.extra_params.get("ports").cloned());
+
             Ok(OutboundConfig {
                 outbound_type: "hysteria2".into(),
                 tag: proxy.tag.clone(),
@@ -467,11 +512,15 @@ fn build_proxy_outbound(proxy: &ProxyConfig) -> Result<OutboundConfig, String> {
                     enabled: true,
                     server_name: proxy.sni.clone(),
                     insecure: proxy.insecure,
+                    alpn,
                     utls: None,
                     reality: None,
                 }),
                 transport: None,
                 network: None,
+                packet_encoding: None,
+                obfs,
+                server_ports,
                 up_mbps: proxy.up_mbps,
                 down_mbps: proxy.down_mbps,
             })
@@ -489,11 +538,15 @@ fn build_proxy_outbound(proxy: &ProxyConfig) -> Result<OutboundConfig, String> {
                     enabled: true,
                     server_name: proxy.sni.clone(),
                     insecure: proxy.insecure,
+                    alpn: None,
                     utls: None,
                     reality: None,
                 }),
                 transport: None,
                 network: None,
+                packet_encoding: None,
+                obfs: None,
+                server_ports: None,
                 up_mbps: None,
                 down_mbps: None,
             })

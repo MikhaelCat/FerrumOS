@@ -539,3 +539,98 @@ input:checked + .slider:before {
     border: 1px solid #1f293d;
     box-shadow: 0 20px 35px -5px rgba(0, 0, 0, 0.7);
 }
+
+/* ========================================================
+   Mobile Responsiveness & Touch Optimization
+   ======================================================== */
+@media (max-width: 860px) {
+    .layout {
+        flex-direction: column;
+    }
+
+    .sidebar {
+        width: 100%;
+        border-right: none;
+        border-bottom: 1px solid var(--border-color);
+        padding: 0.75rem 1rem;
+        position: sticky;
+        top: 0;
+        z-index: 100;
+        background: rgba(11, 17, 30, 0.95);
+        backdrop-filter: blur(12px);
+    }
+
+    .brand {
+        padding-bottom: 0.5rem;
+        margin-bottom: 0.5rem;
+    }
+
+    .nav-menu {
+        flex-direction: row;
+        overflow-x: auto;
+        white-space: nowrap;
+        padding-bottom: 0.25rem;
+        -webkit-overflow-scrolling: touch;
+        gap: 0.5rem;
+    }
+
+    .nav-item {
+        flex-shrink: 0;
+        padding: 0.45rem 0.75rem;
+        font-size: 0.8rem;
+    }
+
+    .sidebar-footer {
+        display: none;
+    }
+
+    .content {
+        padding: 1rem;
+    }
+
+    .topbar {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.75rem;
+        margin-bottom: 1.25rem;
+    }
+
+    .topbar-actions {
+        width: 100%;
+        flex-wrap: wrap;
+    }
+
+    .grid-2, .grid-3, .grid-4 {
+        grid-template-columns: 1fr !important;
+    }
+
+    .radio-cards.grid-3 {
+        grid-template-columns: 1fr !important;
+    }
+
+    .input-action-group {
+        flex-direction: column;
+        align-items: stretch;
+    }
+
+    .input-action-group .btn {
+        width: 100%;
+    }
+
+    .flex-gap {
+        flex-wrap: wrap;
+    }
+
+    .form-control {
+        font-size: 16px; /* Prevents auto-zoom on iOS Safari */
+    }
+
+    .btn {
+        min-height: 40px;
+    }
+
+    .modal-card, .login-box {
+        width: 95%;
+        margin: 1rem;
+    }
+}

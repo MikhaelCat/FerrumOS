@@ -278,7 +278,7 @@ pub fn handle_request(mut request: Request, state: &AppState) {
 
     match (method, url.as_str()) {
         // UI static assets
-        (Method::Get, "/") | (Method::Get, "/index.html") => {
+        (Method::Get, "/") | (Method::Get, "/index.html") | (Method::Head, "/") | (Method::Head, "/index.html") => {
             let resp = Response::from_string(INDEX_HTML)
                 .with_header(content_type_html)
                 .with_header(sec_xfo)
@@ -286,7 +286,7 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                 .with_header(sec_ref);
             let _ = request.respond(resp);
         }
-        (Method::Get, "/app.js") => {
+        (Method::Get, "/app.js") | (Method::Head, "/app.js") => {
             let cache_header = Header::from_bytes(&b"Cache-Control"[..], &b"public, max-age=604800, immutable"[..]).unwrap();
             let resp = Response::from_string(APP_JS)
                 .with_header(content_type_js)
@@ -295,7 +295,7 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                 .with_header(cache_header);
             let _ = request.respond(resp);
         }
-        (Method::Get, "/app.css") => {
+        (Method::Get, "/app.css") | (Method::Head, "/app.css") => {
             let cache_header = Header::from_bytes(&b"Cache-Control"[..], &b"public, max-age=604800, immutable"[..]).unwrap();
             let resp = Response::from_string(APP_CSS)
                 .with_header(content_type_css)
