@@ -32,13 +32,30 @@
                     <span class="icon">⚡</span>
                     <span>Zapret DPI (YouTube/Discord)</span>
                 </button>
+                <button class="nav-item" data-tab="gameboost">
+                    <span class="icon">🎮</span>
+                    <span>Game Boost & SQM QoS</span>
+                    <span class="badge-pill bg-purple text-light" style="background:#8b5cf6;">ROG</span>
+                </button>
                 <button class="nav-item" data-tab="wifi">
                     <span class="icon">📶</span>
                     <span>Wi-Fi 2.4G / 5G</span>
                 </button>
+                <button class="nav-item" data-tab="radar">
+                    <span class="icon">📡</span>
+                    <span>Wi-Fi Радар & Эфир</span>
+                </button>
                 <button class="nav-item" data-tab="network">
                     <span class="icon">🌐</span>
                     <span>Сеть & Маршрутизация</span>
+                </button>
+                <button class="nav-item" data-tab="parental">
+                    <span class="icon">👨‍👩‍👧</span>
+                    <span>Родительский контроль</span>
+                </button>
+                <button class="nav-item" data-tab="tools">
+                    <span class="icon">🔧</span>
+                    <span>Инструменты & WoL</span>
                 </button>
                 <button class="nav-item" data-tab="system">
                     <span class="icon">⚙️</span>
@@ -299,6 +316,89 @@
                         </div>
 
                         <button class="btn btn-primary" id="btn-save-zapret">Сохранить настройки Zapret</button>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB: GAME BOOST & SQM QOS (ROG-STYLE) -->
+            <section id="tab-gameboost" class="tab-pane">
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>🎮 ROG Game Boost & SQM QoS (Устранение Bufferbloat)</h3>
+                            <p class="muted text-xs">Приоритезация игровых пакетов (Steam, CS2, Dota 2, Valorant, Apex, Discord) с тегом DSCP Expedited Forwarding и защита от задержек FQ-CoDel.</p>
+                        </div>
+                        <span class="badge-pill bg-purple text-light" style="background:#8b5cf6;">ROG Engine</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-2 mb-3">
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Активировать ROG Game Boost</strong>
+                                    <p class="muted">Высший приоритет сетевых очередей для онлайн-игр и Discord</p>
+                                </div>
+                                <input type="checkbox" id="qos-game-boost" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>SQM Bufferbloat Killer (FQ-CoDel)</strong>
+                                    <p class="muted">Устраняет скачки пинга при одновременной закачке торрентов или 4K видео</p>
+                                </div>
+                                <input type="checkbox" id="qos-sqm-enable" checked>
+                            </label>
+                        </div>
+
+                        <div class="grid grid-3 mb-3">
+                            <div class="form-group">
+                                <label>Лимит Download (Мбит/с):</label>
+                                <input type="number" id="qos-down-limit" class="form-control" value="95" min="10" max="100">
+                                <span class="muted text-xs">Рекомендуется 95% от скорости тарифа (для 100M -> 95)</span>
+                            </div>
+                            <div class="form-group">
+                                <label>Лимит Upload (Мбит/с):</label>
+                                <input type="number" id="qos-up-limit" class="form-control" value="95" min="10" max="100">
+                                <span class="muted text-xs">Предотвращает переполнение буфера отдачи</span>
+                            </div>
+                            <div class="form-group">
+                                <label>Приоритетные игровые IP (ПК/Консоли):</label>
+                                <input type="text" id="qos-game-ips" class="form-control" placeholder="192.168.1.105, 192.168.1.150">
+                                <span class="muted text-xs">IP устройств для безусловного ускорения</span>
+                            </div>
+                        </div>
+
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-qos">💾 Применить настройки Game Boost</button>
+                            <span id="qos-save-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Traffic Analyzer (Bandwidth by Client) -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>📊 Traffic Analyzer: Монитор скорости устройств в реальном времени</h3>
+                            <p class="muted text-xs">Показывает текущую скорость приема/передачи и суммарный объем трафика по каждому подключенному клиенту.</p>
+                        </div>
+                        <button class="btn btn-sm btn-outline" id="btn-refresh-traffic">🔄 Обновить</button>
+                    </div>
+                    <div class="card-body">
+                        <table class="cyber-table" id="traffic-analyzer-table">
+                            <thead>
+                                <tr>
+                                    <th>Клиент / Устройство</th>
+                                    <th>IP-адрес</th>
+                                    <th>MAC-адрес</th>
+                                    <th>Скорость RX (Вниз)</th>
+                                    <th>Скорость TX (Вверх)</th>
+                                    <th>Всего трафика</th>
+                                    <th>Приоритет</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                <!-- Loaded dynamically -->
+                            </tbody>
+                        </table>
                     </div>
                 </div>
             </section>
@@ -587,6 +687,75 @@
                 <div class="flex-gap">
                     <button class="btn btn-success" id="btn-save-wifi">💾 Применить и сохранить настройки Wi-Fi</button>
                     <span id="wifi-save-status" class="text-xs align-self-center"></span>
+                </div>
+            </section>
+
+            <!-- TAB: WI-FI RADAR & SPECTRUM ANALYZER -->
+            <section id="tab-radar" class="tab-pane">
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>📡 Wi-Fi Радар, Анализ эфира & Автовыбор каналов (ACS)</h3>
+                            <p class="muted text-xs">Аппаратное сканирование радиоэфира чипами MediaTek, оценка занятости частот соседями и мгновенный выбор чистейшего канала.</p>
+                        </div>
+                        <div class="flex-gap">
+                            <button class="btn btn-sm btn-outline" id="btn-scan-wifi-radar">⚡ Сканировать эфир</button>
+                            <button class="btn btn-sm btn-primary" id="btn-trigger-acs">🚀 Оптимизировать каналы (ACS)</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="radar-acs-alert" class="badge-status status-good mb-3 d-none">
+                            <strong id="radar-acs-text"></strong>
+                        </div>
+
+                        <div class="grid grid-2 mb-4">
+                            <!-- 2.4 GHz Spectrum Congestion -->
+                            <div class="card" style="background:#090d16; border:1px solid #1f293d;">
+                                <div class="card-header flex-between">
+                                    <strong class="text-cyan">Загруженность каналов 2.4 GHz</strong>
+                                    <span class="badge-pill">Каналы 1 - 13</span>
+                                </div>
+                                <div class="card-body" id="radar-2g-congestion">
+                                    <div class="text-xs muted text-center py-2">Нажмите «Сканировать эфир» для анализа</div>
+                                </div>
+                            </div>
+
+                            <!-- 5 GHz Spectrum Congestion -->
+                            <div class="card" style="background:#090d16; border:1px solid #1f293d;">
+                                <div class="card-header flex-between">
+                                    <strong class="text-cyan">Загруженность каналов 5 GHz</strong>
+                                    <span class="badge-pill">UNII 36 - 165</span>
+                                </div>
+                                <div class="card-body" id="radar-5g-congestion">
+                                    <div class="text-xs muted text-center py-2">Нажмите «Сканировать эфир» для анализа</div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Neighbor AP Survey Table -->
+                        <div>
+                            <div class="flex-between mb-2">
+                                <strong>Обнаруженные соседние беспроводные сети (Site Survey):</strong>
+                                <span class="muted text-xs" id="radar-networks-count">Сетей в радиусе: 0</span>
+                            </div>
+                            <table class="cyber-table" id="radar-networks-table">
+                                <thead>
+                                    <tr>
+                                        <th>Имя сети (SSID)</th>
+                                        <th>BSSID (MAC)</th>
+                                        <th>Диапазон</th>
+                                        <th>Канал</th>
+                                        <th>Ширина</th>
+                                        <th>Сигнал (RSSI)</th>
+                                        <th>Шифрование</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Rendered dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
                 </div>
             </section>
 
@@ -896,6 +1065,197 @@
                         <div class="flex-gap">
                             <button class="btn btn-primary" id="btn-save-pf">💾 Применить правила проброса портов</button>
                             <span id="pf-save-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB: PARENTAL CONTROLS -->
+            <section id="tab-parental" class="tab-pane">
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>👨‍👩‍👧 Родительский контроль & Доступ (AiProtection Lite)</h3>
+                            <p class="muted text-xs">Расписание доступа к интернету по MAC-адресам устройств и безопасный поиск SafeSearch.</p>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="parental-enable">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="card-body">
+                        <div class="toggle-card flex-between mb-3 text-xs">
+                            <div>
+                                <strong>Принудительный SafeSearch (Google, YouTube, Яндекс)</strong>
+                                <p class="muted">Блокирует взрослый контент, порнографию и нецензурные комментарии на всех устройствах в доме.</p>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="parental-safesearch" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+
+                        <div class="mb-3">
+                            <div class="flex-between mb-2">
+                                <strong>Правила ограничения доступа для устройств:</strong>
+                                <button class="btn btn-sm btn-outline" id="btn-add-parental-rule">+ Добавить правило</button>
+                            </div>
+                            <table class="cyber-table" id="parental-rules-table">
+                                <thead>
+                                    <tr>
+                                        <th>Название / Устройство</th>
+                                        <th>MAC-адрес</th>
+                                        <th>Блокировка</th>
+                                        <th>Расписание</th>
+                                        <th>Начало</th>
+                                        <th>Конец</th>
+                                        <th>Действие</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <!-- Rendered dynamically -->
+                                </tbody>
+                            </table>
+                        </div>
+
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-parental">💾 Сохранить правила родительского контроля</button>
+                            <span id="parental-save-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- TAB: TOOLS & DIAGNOSTICS -->
+            <section id="tab-tools" class="tab-pane">
+                <div class="grid grid-2 mb-4">
+                    <!-- Wake-on-LAN -->
+                    <div class="card">
+                        <div class="card-header">
+                            <h3>⚡ Wake-on-LAN (WoL)</h3>
+                            <p class="muted text-xs">Удаленное пробуждение спящих компьютеров и NAS серверов через Magic Packet.</p>
+                        </div>
+                        <div class="card-body">
+                            <div class="form-group mb-3">
+                                <label>MAC-адрес целевого ПК:</label>
+                                <input type="text" id="wol-mac-input" class="form-control" placeholder="AA:BB:CC:DD:EE:FF">
+                            </div>
+                            <div class="flex-gap">
+                                <button class="btn btn-primary" id="btn-send-wol">⚡ Разбудить устройство</button>
+                                <span id="wol-status" class="text-xs align-self-center"></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Ping Watchdog -->
+                    <div class="card">
+                        <div class="card-header flex-between">
+                            <div>
+                                <h3>🐕 Ping Watchdog (Авто-восстановление)</h3>
+                                <p class="muted text-xs">Автоматически перезапускает интернет или роутер при обрыве связи со шлюзом.</p>
+                            </div>
+                            <label class="switch">
+                                <input type="checkbox" id="watchdog-enable" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                        <div class="card-body">
+                            <div class="grid grid-2 mb-2 text-xs">
+                                <div class="form-group">
+                                    <label>Контрольный IP (Пинг):</label>
+                                    <input type="text" id="watchdog-ip" class="form-control text-xs" value="1.1.1.1">
+                                </div>
+                                <div class="form-group">
+                                    <label>Интервал (сек):</label>
+                                    <input type="number" id="watchdog-interval" class="form-control text-xs" value="30" min="10" max="300">
+                                </div>
+                            </div>
+                            <div class="grid grid-2 mb-3 text-xs">
+                                <div class="form-group">
+                                    <label>Порог сбоев подряд:</label>
+                                    <input type="number" id="watchdog-fails" class="form-control text-xs" value="3" min="1" max="10">
+                                </div>
+                                <div class="form-group">
+                                    <label>Действие при сбое:</label>
+                                    <select id="watchdog-action" class="form-control text-xs">
+                                        <option value="restart_wan" selected>Перезапустить WAN (eth2.2)</option>
+                                        <option value="reboot_router">Мягкий перезапуск роутера</option>
+                                    </select>
+                                </div>
+                            </div>
+                            <div class="flex-gap">
+                                <button class="btn btn-sm btn-primary" id="btn-save-watchdog">Сохранить Watchdog</button>
+                                <span id="watchdog-status" class="text-xs align-self-center"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dynamic DNS (DDNS) -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>🌐 Динамический DNS (DDNS)</h3>
+                            <p class="muted text-xs">Обеспечивает постоянное доменное имя при смене динамического IP адреса провайдера.</p>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="ddns-enable">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-3 mb-3">
+                            <div class="form-group">
+                                <label>Сервис DDNS:</label>
+                                <select id="ddns-service" class="form-control">
+                                    <option value="duckdns" selected>DuckDNS (Бесплатный)</option>
+                                    <option value="cloudflare">Cloudflare API</option>
+                                    <option value="noip">No-IP</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Ваш домен:</label>
+                                <input type="text" id="ddns-domain" class="form-control" placeholder="myhome.duckdns.org">
+                            </div>
+                            <div class="form-group">
+                                <label>Токен / Секретный ключ:</label>
+                                <input type="password" id="ddns-token" class="form-control" placeholder="••••••••••••••••">
+                            </div>
+                        </div>
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-ddns">💾 Сохранить настройки DDNS</button>
+                            <span id="ddns-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Network Diagnostics -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>🛠️ Сетевая диагностика (Ping, Traceroute, DNS)</h3>
+                        <p class="muted text-xs">Проверка связи, маршрута и разрешения доменных имен прямо с роутера.</p>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-3 mb-3">
+                            <div class="form-group">
+                                <label>Инструмент:</label>
+                                <select id="diag-tool" class="form-control">
+                                    <option value="ping" selected>Ping (Проверка доступности)</option>
+                                    <option value="traceroute">Traceroute (Трассировка маршрута)</option>
+                                    <option value="nslookup">Nslookup (Проверка DNS)</option>
+                                </select>
+                            </div>
+                            <div class="form-group" style="grid-column: span 2;">
+                                <label>Целевой хост или IP:</label>
+                                <div class="flex-gap">
+                                    <input type="text" id="diag-target" class="form-control" value="ya.ru" placeholder="google.com или 1.1.1.1">
+                                    <button class="btn btn-primary" id="btn-run-diag">▶ Запустить</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div class="form-group">
+                            <label>Результат диагностики:</label>
+                            <pre id="diag-output" style="background:#090d16; border:1px solid #1f293d; border-radius:6px; padding:0.75rem; font-size:0.75rem; color:#10b981; max-height:200px; overflow-y:auto; font-family:monospace; min-height:80px;">Нажмите «Запустить» для выполнения диагностики...</pre>
                         </div>
                     </div>
                 </div>

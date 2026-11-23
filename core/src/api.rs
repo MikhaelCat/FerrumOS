@@ -1,6 +1,12 @@
 use crate::network::{
     get_network_interfaces, WifiConfig, DnsAdvancedConfig, LanDhcpConfig, WanConfig,
-    apply_wifi_config, apply_dns_config, apply_lan_config, apply_wan_config, get_dhcp_leases
+    apply_wifi_config, apply_dns_config, apply_lan_config, apply_wan_config, get_dhcp_leases,
+    scan_wifi_networks, analyze_channel_congestion, trigger_auto_channel_selection,
+    SqmQosConfig, apply_sqm_qos, get_clients_traffic,
+    ParentalControlConfig, apply_parental_controls,
+    send_wake_on_lan, PingWatchdogConfig, apply_watchdog_config,
+    DdnsConfig, apply_ddns_config, DiagnosticReq, run_diagnostic,
+    WifiNeighborNetwork, ChannelCongestion
 };
 use crate::parser::{parse_proxy_uri, ProxyConfig};
 use crate::singbox::{generate_singbox_config, RoutingMode, SingBoxConfig};
@@ -21,6 +27,10 @@ pub struct AppState {
     pub dns_config: Arc<Mutex<DnsAdvancedConfig>>,
     pub lan_config: Arc<Mutex<LanDhcpConfig>>,
     pub wan_config: Arc<Mutex<WanConfig>>,
+    pub qos_config: Arc<Mutex<SqmQosConfig>>,
+    pub parental_config: Arc<Mutex<ParentalControlConfig>>,
+    pub watchdog_config: Arc<Mutex<PingWatchdogConfig>>,
+    pub ddns_config: Arc<Mutex<DdnsConfig>>,
 }
 
 impl AppState {
@@ -45,6 +55,26 @@ impl AppState {
             .and_then(|s| serde_json::from_str::<WanConfig>(&s).ok())
             .unwrap_or_default();
 
+        let qos_cfg = std::fs::read_to_string("/etc/storage/qos_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<SqmQosConfig>(&s).ok())
+            .unwrap_or_default();
+
+        let parental_cfg = std::fs::read_to_string("/etc/storage/parental_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<ParentalControlConfig>(&s).ok())
+            .unwrap_or_default();
+
+        let watchdog_cfg = std::fs::read_to_string("/etc/storage/watchdog_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<PingWatchdogConfig>(&s).ok())
+            .unwrap_or_default();
+
+        let ddns_cfg = std::fs::read_to_string("/etc/storage/ddns_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<DdnsConfig>(&s).ok())
+            .unwrap_or_default();
+
         AppState {
             proxy_config: Arc::new(Mutex::new(None)),
             routing_mode: Arc::new(Mutex::new(RoutingMode::SmartRu)),
@@ -53,8 +83,23 @@ impl AppState {
             dns_config: Arc::new(Mutex::new(dns_cfg)),
             lan_config: Arc::new(Mutex::new(lan_cfg)),
             wan_config: Arc::new(Mutex::new(wan_cfg)),
+            qos_config: Arc::new(Mutex::new(qos_cfg)),
+            parental_config: Arc::new(Mutex::new(parental_cfg)),
+            watchdog_config: Arc::new(Mutex::new(watchdog_cfg)),
+            ddns_config: Arc::new(Mutex::new(ddns_cfg)),
         }
     }
+}
+
+#[derive(Deserialize)]
+struct WolReq {
+    mac: String,
+}
+
+#[derive(Serialize)]
+struct WifiScanResp {
+    networks: Vec<WifiNeighborNetwork>,
+    congestion: Vec<ChannelCongestion>,
 }
 
 #[derive(Deserialize)]
@@ -291,6 +336,194 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                     success: false,
                     message: "Invalid WAN JSON payload".into(),
                 };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: Wi-Fi Site Survey & Radar
+        (Method::Get, "/api/v1/wifi/scan") => {
+            let networks = scan_wifi_networks();
+            let congestion = analyze_channel_congestion(&networks);
+            let resp = WifiScanResp { networks, congestion };
+            respond_json(request, &resp, cors_header, content_type_json);
+        }
+
+        // REST API: Dynamic Auto Channel Selection (ACS) Trigger
+        (Method::Post, "/api/v1/wifi/acs/trigger") => {
+            match trigger_auto_channel_selection() {
+                Ok(msg) => {
+                    let resp = GenericResp { success: true, message: msg };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                }
+                Err(e) => {
+                    let resp = GenericResp { success: false, message: e };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                }
+            }
+        }
+
+        // REST API: ASUS ROG Game Boost & SQM QoS
+        (Method::Get, "/api/v1/qos/config") => {
+            let qos = state.qos_config.lock().unwrap().clone();
+            respond_json(request, &qos, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/qos/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<SqmQosConfig>(&body) {
+                *state.qos_config.lock().unwrap() = new_cfg.clone();
+                let _ = apply_sqm_qos(&new_cfg);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/qos_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
+                let resp = GenericResp {
+                    success: true,
+                    message: "Настройки Game Boost и SQM QoS применены и сохранены".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Некорректный JSON для QoS".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: Live Per-Device Traffic Analyzer
+        (Method::Get, "/api/v1/clients/traffic") => {
+            let game_ips = state.qos_config.lock().unwrap().game_device_ips.clone();
+            let stats = get_clients_traffic(&game_ips);
+            respond_json(request, &stats, cors_header, content_type_json);
+        }
+
+        // REST API: Parental Controls & Scheduling
+        (Method::Get, "/api/v1/parental/config") => {
+            let parental = state.parental_config.lock().unwrap().clone();
+            respond_json(request, &parental, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/parental/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<ParentalControlConfig>(&body) {
+                *state.parental_config.lock().unwrap() = new_cfg.clone();
+                let _ = apply_parental_controls(&new_cfg);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/parental_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
+                let resp = GenericResp {
+                    success: true,
+                    message: "Правила родительского контроля сохранены и активны".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Некорректный JSON для родительского контроля".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: Wake-on-LAN (WoL)
+        (Method::Post, "/api/v1/wol/wake") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(req) = serde_json::from_str::<WolReq>(&body) {
+                match send_wake_on_lan(&req.mac) {
+                    Ok(_) => {
+                        let resp = GenericResp {
+                            success: true,
+                            message: format!("Magic packet успешно отправлен на MAC {}", req.mac),
+                        };
+                        respond_json(request, &resp, cors_header, content_type_json);
+                    }
+                    Err(e) => {
+                        let resp = GenericResp { success: false, message: e };
+                        respond_json(request, &resp, cors_header, content_type_json);
+                    }
+                }
+            } else {
+                let resp = GenericResp { success: false, message: "Не указан MAC-адрес".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: Ping Watchdog
+        (Method::Get, "/api/v1/watchdog/config") => {
+            let wd = state.watchdog_config.lock().unwrap().clone();
+            respond_json(request, &wd, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/watchdog/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<PingWatchdogConfig>(&body) {
+                *state.watchdog_config.lock().unwrap() = new_cfg.clone();
+                let _ = apply_watchdog_config(&new_cfg);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/watchdog_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
+                let resp = GenericResp {
+                    success: true,
+                    message: "Настройки Ping Watchdog применены и сохранены".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp { success: false, message: "Некорректный JSON Watchdog".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: Dynamic DNS (DDNS)
+        (Method::Get, "/api/v1/ddns/config") => {
+            let ddns = state.ddns_config.lock().unwrap().clone();
+            respond_json(request, &ddns, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/ddns/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<DdnsConfig>(&body) {
+                *state.ddns_config.lock().unwrap() = new_cfg.clone();
+                let _ = apply_ddns_config(&new_cfg);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/ddns_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
+                let resp = GenericResp {
+                    success: true,
+                    message: "Настройки DDNS успешно сохранены".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp { success: false, message: "Некорректный JSON DDNS".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: Network Diagnostics
+        (Method::Post, "/api/v1/diagnostics/run") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(req) = serde_json::from_str::<DiagnosticReq>(&body) {
+                let result = run_diagnostic(&req);
+                respond_json(request, &result, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp { success: false, message: "Некорректный запрос диагностики".into() };
                 respond_json(request, &resp, cors_header, content_type_json);
             }
         }

@@ -4,8 +4,12 @@ document.addEventListener("DOMContentLoaded", () => {
     initDashboard();
     initProxyManager();
     initZapretManager();
+    initGameBoostManager();
     initWifiManager();
+    initRadarManager();
     initNetworkManager();
+    initParentalManager();
+    initToolsManager();
     startStatsPolling();
 });
 
@@ -15,8 +19,12 @@ function initNavigation() {
         dashboard: { title: "Дашборд и мониторинг", subtitle: "Состояние аппаратных ресурсов и сетевой активности" },
         proxy: { title: "VLESS Reality & Hysteria 2", subtitle: "1-Click подключение и умный обход блокировок (РФ)" },
         zapret: { title: "Zapret DPI Bypass", subtitle: "Прямая локальная десинхронизация ТСПУ для YouTube 4K и Discord" },
+        gameboost: { title: "ROG Game Boost & SQM QoS", subtitle: "Приоритезация трафика, сверхнизкий пинг и устранение Bufferbloat" },
         wifi: { title: "Беспроводная сеть Wi-Fi", subtitle: "Настройки 2.4 GHz (MT7620) и 5 GHz (MT7610E AC)" },
-        network: { title: "Сеть & Маршрутизация", subtitle: "Параметры WAN, коммутатора и DNS" },
+        radar: { title: "Wi-Fi Радар & Анализ эфира", subtitle: "Анализ радиопомех и автоматический выбор чистейшего канала (ACS)" },
+        network: { title: "Сеть & Маршрутизация", subtitle: "Параметры WAN, коммутатора, LAN и DNS" },
+        parental: { title: "Родительский контроль & Доступ", subtitle: "Ограничение доступа по расписанию и принудительный SafeSearch" },
+        tools: { title: "Инструменты & WoL", subtitle: "Удаленный запуск ПК (Magic Packet), Watchdog, DDNS и диагностика" },
         system: { title: "Система & Гарантии защиты", subtitle: "Аппаратная защита калибровок MTD2 и управление питанием" },
     };
 
@@ -893,6 +901,481 @@ function initNetworkManager() {
             pfStatusSpan.textContent = "Ошибка: " + e.message;
         } finally {
             btnSavePf.textContent = "💾 Применить правила проброса портов";
+        }
+    });
+}
+
+// ----------------------------------------------------
+// 5. ROG Game Boost & SQM QoS Manager
+// ----------------------------------------------------
+function initGameBoostManager() {
+    const qosBoostEnable = document.getElementById("qos-game-boost");
+    const qosSqmEnable = document.getElementById("qos-sqm-enable");
+    const qosDownLimit = document.getElementById("qos-down-limit");
+    const qosUpLimit = document.getElementById("qos-up-limit");
+    const qosGameIps = document.getElementById("qos-game-ips");
+    const btnSaveQos = document.getElementById("btn-save-qos");
+    const qosStatusSpan = document.getElementById("qos-save-status");
+    const trafficTbody = document.querySelector("#traffic-analyzer-table tbody");
+    const btnRefreshTraffic = document.getElementById("btn-refresh-traffic");
+
+    fetch("/api/v1/qos/config")
+        .then(r => r.json())
+        .then(cfg => {
+            if (!cfg) return;
+            if (qosBoostEnable) qosBoostEnable.checked = !!cfg.game_boost_enabled;
+            if (qosSqmEnable) qosSqmEnable.checked = !!cfg.sqm_enabled;
+            if (qosDownLimit) qosDownLimit.value = cfg.download_limit_mbps || 95;
+            if (qosUpLimit) qosUpLimit.value = cfg.upload_limit_mbps || 95;
+            if (qosGameIps && cfg.game_device_ips) qosGameIps.value = cfg.game_device_ips.join(", ");
+        })
+        .catch(e => console.warn("QoS load failed", e));
+
+    btnSaveQos?.addEventListener("click", async () => {
+        const ips = (qosGameIps?.value || "")
+            .split(",")
+            .map(s => s.trim())
+            .filter(Boolean);
+
+        const payload = {
+            game_boost_enabled: qosBoostEnable.checked,
+            sqm_enabled: qosSqmEnable.checked,
+            download_limit_mbps: parseInt(qosDownLimit.value, 10) || 95,
+            upload_limit_mbps: parseInt(qosUpLimit.value, 10) || 95,
+            game_device_ips: ips,
+            prioritize_voice: true,
+        };
+
+        btnSaveQos.textContent = "Применение...";
+        try {
+            const res = await fetch("/api/v1/qos/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+                qosStatusSpan.textContent = "✅ Режим ROG Game Boost активирован!";
+                qosStatusSpan.className = "text-xs text-emerald align-self-center";
+            } else {
+                qosStatusSpan.textContent = "❌ " + data.message;
+                qosStatusSpan.className = "text-xs text-rose align-self-center";
+            }
+        } catch (e) {
+            qosStatusSpan.textContent = "Ошибка: " + e.message;
+        } finally {
+            btnSaveQos.textContent = "💾 Применить настройки Game Boost";
+        }
+    });
+
+    function refreshTrafficAnalyzer() {
+        if (!trafficTbody) return;
+        fetch("/api/v1/clients/traffic")
+            .then(r => r.json())
+            .then(stats => {
+                trafficTbody.innerHTML = "";
+                if (!stats || stats.length === 0) {
+                    trafficTbody.innerHTML = `<tr><td colspan="7" class="text-center muted">Нет данных о трафике</td></tr>`;
+                    return;
+                }
+                stats.forEach(c => {
+                    const tr = document.createElement("tr");
+                    const rxDisplay = c.rx_rate_kbps > 1024 ? (c.rx_rate_kbps / 1024).toFixed(1) + " Мбит/с" : c.rx_rate_kbps + " Кбит/с";
+                    const txDisplay = c.tx_rate_kbps > 1024 ? (c.tx_rate_kbps / 1024).toFixed(1) + " Мбит/с" : c.tx_rate_kbps + " Кбит/с";
+                    const totalMb = (c.total_rx_mb + c.total_tx_mb).toFixed(1) + " МБ";
+
+                    tr.innerHTML = `
+                        <td><strong>${c.hostname || 'Device'}</strong></td>
+                        <td class="text-cyan font-bold">${c.ip}</td>
+                        <td class="font-mono text-xs">${c.mac}</td>
+                        <td class="text-emerald font-bold">${rxDisplay}</td>
+                        <td class="text-purple font-bold">${txDisplay}</td>
+                        <td class="muted text-xs">${totalMb}</td>
+                        <td>${c.is_gaming ? '<span class="badge-pill" style="background:#8b5cf6; color:#fff;">🎮 Game Boost</span>' : '<span class="muted text-xs">Обычный</span>'}</td>
+                    `;
+                    trafficTbody.appendChild(tr);
+                });
+            })
+            .catch(e => console.warn("Traffic stats failed", e));
+    }
+
+    btnRefreshTraffic?.addEventListener("click", refreshTrafficAnalyzer);
+    refreshTrafficAnalyzer();
+}
+
+// ----------------------------------------------------
+// 6. Wi-Fi Radar & Spectrum Analyzer Manager
+// ----------------------------------------------------
+function initRadarManager() {
+    const btnScan = document.getElementById("btn-scan-wifi-radar");
+    const btnAcs = document.getElementById("btn-trigger-acs");
+    const container2g = document.getElementById("radar-2g-congestion");
+    const container5g = document.getElementById("radar-5g-congestion");
+    const networksTbody = document.querySelector("#radar-networks-table tbody");
+    const networksCount = document.getElementById("radar-networks-count");
+    const acsAlert = document.getElementById("radar-acs-alert");
+    const acsText = document.getElementById("radar-acs-text");
+
+    function renderCongestion(list, container) {
+        if (!container) return;
+        container.innerHTML = "";
+        const grid = document.createElement("div");
+        grid.style.display = "grid";
+        grid.style.gridTemplateColumns = "repeat(auto-fit, minmax(70px, 1fr))";
+        grid.style.gap = "0.5rem";
+
+        list.forEach(item => {
+            const card = document.createElement("div");
+            card.style.background = "#111726";
+            card.style.border = "1px solid #1f293d";
+            card.style.borderRadius = "6px";
+            card.style.padding = "0.4rem";
+            card.style.textAlign = "center";
+
+            let barColor = "var(--emerald)";
+            if (item.utilization_pct > 60) barColor = "var(--rose)";
+            else if (item.utilization_pct > 25) barColor = "var(--amber)";
+
+            card.innerHTML = `
+                <div style="font-weight:700; font-size:0.85rem; color:var(--cyan);">CH ${item.channel}</div>
+                <div style="font-size:0.65rem; color:var(--text-muted);">${item.ap_count} сетей</div>
+                <div class="progress-bar mt-1" style="height:4px;">
+                    <div class="progress-fill" style="width:${item.utilization_pct}%; background:${barColor};"></div>
+                </div>
+            `;
+            grid.appendChild(card);
+        });
+        container.appendChild(grid);
+    }
+
+    async function scanRadar() {
+        if (btnScan) btnScan.textContent = "Сканирование...";
+        try {
+            const res = await fetch("/api/v1/wifi/scan");
+            const data = await res.json();
+            if (!data) return;
+
+            // Congestion 2.4G & 5G
+            if (data.congestion) {
+                const cong2g = data.congestion.filter(c => c.band === "2.4 GHz");
+                const cong5g = data.congestion.filter(c => c.band === "5 GHz");
+                renderCongestion(cong2g, container2g);
+                renderCongestion(cong5g, container5g);
+            }
+
+            // Neighbor networks table
+            if (networksTbody && data.networks) {
+                networksTbody.innerHTML = "";
+                if (networksCount) networksCount.textContent = `Сетей в радиусе: ${data.networks.length}`;
+
+                data.networks.forEach(net => {
+                    const tr = document.createElement("tr");
+                    let sigColor = "text-emerald";
+                    if (net.signal_dbm < -75) sigColor = "text-rose";
+                    else if (net.signal_dbm < -65) sigColor = "text-amber";
+
+                    tr.innerHTML = `
+                        <td><strong>${net.ssid || '<Скрытая сеть>'}</strong></td>
+                        <td class="font-mono text-xs">${net.bssid}</td>
+                        <td><span class="badge-pill">${net.band}</span></td>
+                        <td class="text-cyan font-bold">${net.channel}</td>
+                        <td>${net.width_mhz} MHz</td>
+                        <td class="${sigColor} font-bold">${net.signal_dbm} dBm</td>
+                        <td class="text-xs muted">${net.security}</td>
+                    `;
+                    networksTbody.appendChild(tr);
+                });
+            }
+        } catch (e) {
+            console.warn("Wi-Fi scan failed", e);
+        } finally {
+            if (btnScan) btnScan.textContent = "⚡ Сканировать эфир";
+        }
+    }
+
+    btnScan?.addEventListener("click", scanRadar);
+    scanRadar();
+
+    btnAcs?.addEventListener("click", async () => {
+        btnAcs.textContent = "Анализ...";
+        try {
+            const res = await fetch("/api/v1/wifi/acs/trigger", { method: "POST" });
+            const data = await res.json();
+            if (data.success && acsAlert && acsText) {
+                acsText.textContent = "🚀 " + data.message;
+                acsAlert.classList.remove("d-none");
+                scanRadar();
+            }
+        } catch (e) {
+            alert("Ошибка ACS: " + e.message);
+        } finally {
+            btnAcs.textContent = "🚀 Оптимизировать каналы (ACS)";
+        }
+    });
+}
+
+// ----------------------------------------------------
+// 7. Parental Controls & SafeSearch Manager
+// ----------------------------------------------------
+function initParentalManager() {
+    const parentalEnable = document.getElementById("parental-enable");
+    const safesearchEnable = document.getElementById("parental-safesearch");
+    const rulesTbody = document.querySelector("#parental-rules-table tbody");
+    const btnAddRule = document.getElementById("btn-add-parental-rule");
+    const btnSaveParental = document.getElementById("btn-save-parental");
+    const statusSpan = document.getElementById("parental-save-status");
+
+    let currentParentalRules = [];
+
+    function renderParentalRules() {
+        if (!rulesTbody) return;
+        rulesTbody.innerHTML = "";
+        if (currentParentalRules.length === 0) {
+            rulesTbody.innerHTML = `<tr><td colspan="7" class="text-center muted">Нет правил ограничения доступа. Нажмите «+ Добавить правило».</td></tr>`;
+            return;
+        }
+
+        currentParentalRules.forEach((rule, idx) => {
+            const tr = document.createElement("tr");
+            tr.innerHTML = `
+                <td><input type="text" class="form-control text-xs p-name" value="${rule.name || ''}" placeholder="Телефон ребенка"></td>
+                <td><input type="text" class="form-control text-xs p-mac" value="${rule.mac || ''}" placeholder="AA:BB:CC:DD:EE:FF"></td>
+                <td class="text-center"><input type="checkbox" class="p-block" ${rule.blocked ? 'checked' : ''}></td>
+                <td class="text-center"><input type="checkbox" class="p-sched" ${rule.schedule_enabled ? 'checked' : ''}></td>
+                <td><input type="time" class="form-control text-xs p-start" value="${rule.start_time || '22:00'}"></td>
+                <td><input type="time" class="form-control text-xs p-end" value="${rule.end_time || '07:00'}"></td>
+                <td><button class="btn btn-sm btn-danger btn-del-parental" data-idx="${idx}">✕</button></td>
+            `;
+            rulesTbody.appendChild(tr);
+        });
+
+        rulesTbody.querySelectorAll(".btn-del-parental").forEach(btn => {
+            btn.addEventListener("click", (e) => {
+                const idx = parseInt(e.target.dataset.idx, 10);
+                currentParentalRules.splice(idx, 1);
+                renderParentalRules();
+            });
+        });
+    }
+
+    btnAddRule?.addEventListener("click", () => {
+        currentParentalRules.push({
+            name: "Устройство",
+            mac: "",
+            blocked: false,
+            schedule_enabled: true,
+            start_time: "22:00",
+            end_time: "07:00"
+        });
+        renderParentalRules();
+    });
+
+    fetch("/api/v1/parental/config")
+        .then(r => r.json())
+        .then(cfg => {
+            if (!cfg) return;
+            if (parentalEnable) parentalEnable.checked = !!cfg.enabled;
+            if (safesearchEnable) safesearchEnable.checked = !!cfg.safesearch_enabled;
+            currentParentalRules = cfg.rules || [];
+            renderParentalRules();
+        })
+        .catch(e => console.warn("Parental load failed", e));
+
+    btnSaveParental?.addEventListener("click", async () => {
+        const rows = rulesTbody?.querySelectorAll("tr") || [];
+        const rules = [];
+        rows.forEach(tr => {
+            const name = tr.querySelector(".p-name")?.value.trim();
+            const mac = tr.querySelector(".p-mac")?.value.trim();
+            const blocked = tr.querySelector(".p-block")?.checked;
+            const sched = tr.querySelector(".p-sched")?.checked;
+            const start = tr.querySelector(".p-start")?.value;
+            const end = tr.querySelector(".p-end")?.value;
+            if (mac) {
+                rules.push({ name: name || "Rule", mac, blocked, schedule_enabled: sched, start_time: start, end_time: end });
+            }
+        });
+
+        const payload = {
+            enabled: parentalEnable.checked,
+            safesearch_enabled: safesearchEnable.checked,
+            rules: rules,
+        };
+
+        btnSaveParental.textContent = "Сохранение...";
+        try {
+            const res = await fetch("/api/v1/parental/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+                currentParentalRules = rules;
+                statusSpan.textContent = "✅ Правила родительского контроля сохранены!";
+                statusSpan.className = "text-xs text-emerald align-self-center";
+            } else {
+                statusSpan.textContent = "❌ " + data.message;
+                statusSpan.className = "text-xs text-rose align-self-center";
+            }
+        } catch (e) {
+            statusSpan.textContent = "Ошибка: " + e.message;
+        } finally {
+            btnSaveParental.textContent = "💾 Сохранить правила родительского контроля";
+        }
+    });
+}
+
+// ----------------------------------------------------
+// 8. Tools, WoL, Watchdog & Diagnostics Manager
+// ----------------------------------------------------
+function initToolsManager() {
+    // 8.1. Wake-on-LAN
+    const wolMac = document.getElementById("wol-mac-input");
+    const btnWol = document.getElementById("btn-send-wol");
+    const wolStatus = document.getElementById("wol-status");
+
+    btnWol?.addEventListener("click", async () => {
+        const mac = wolMac?.value.trim();
+        if (!mac) {
+            alert("Пожалуйста, введите MAC-адрес (например AA:BB:CC:DD:EE:FF)");
+            return;
+        }
+        btnWol.textContent = "Отправка...";
+        try {
+            const res = await fetch("/api/v1/wol/wake", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ mac })
+            });
+            const data = await res.json();
+            if (data.success) {
+                wolStatus.textContent = "✅ Magic packet отправлен!";
+                wolStatus.className = "text-xs text-emerald align-self-center";
+            } else {
+                wolStatus.textContent = "❌ " + data.message;
+                wolStatus.className = "text-xs text-rose align-self-center";
+            }
+        } catch (e) {
+            wolStatus.textContent = "Ошибка: " + e.message;
+        } finally {
+            btnWol.textContent = "⚡ Разбудить устройство";
+        }
+    });
+
+    // 8.2. Ping Watchdog
+    const wdEnable = document.getElementById("watchdog-enable");
+    const wdIp = document.getElementById("watchdog-ip");
+    const wdInterval = document.getElementById("watchdog-interval");
+    const wdFails = document.getElementById("watchdog-fails");
+    const wdAction = document.getElementById("watchdog-action");
+    const btnSaveWd = document.getElementById("btn-save-watchdog");
+    const wdStatus = document.getElementById("watchdog-status");
+
+    fetch("/api/v1/watchdog/config")
+        .then(r => r.json())
+        .then(cfg => {
+            if (!cfg) return;
+            if (wdEnable) wdEnable.checked = !!cfg.enabled;
+            if (wdIp) wdIp.value = cfg.target_ip || "1.1.1.1";
+            if (wdInterval) wdInterval.value = cfg.check_interval_sec || 30;
+            if (wdFails) wdFails.value = cfg.failure_threshold || 3;
+            if (wdAction) wdAction.value = cfg.action || "restart_wan";
+        })
+        .catch(e => console.warn("Watchdog load failed", e));
+
+    btnSaveWd?.addEventListener("click", async () => {
+        const payload = {
+            enabled: wdEnable.checked,
+            target_ip: wdIp.value.trim(),
+            check_interval_sec: parseInt(wdInterval.value, 10) || 30,
+            failure_threshold: parseInt(wdFails.value, 10) || 3,
+            action: wdAction.value,
+        };
+        try {
+            const res = await fetch("/api/v1/watchdog/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+                wdStatus.textContent = "✅ Сохранено";
+                wdStatus.className = "text-xs text-emerald align-self-center";
+            }
+        } catch (e) {
+            wdStatus.textContent = "Ошибка: " + e.message;
+        }
+    });
+
+    // 8.3. DDNS
+    const ddnsEnable = document.getElementById("ddns-enable");
+    const ddnsService = document.getElementById("ddns-service");
+    const ddnsDomain = document.getElementById("ddns-domain");
+    const ddnsToken = document.getElementById("ddns-token");
+    const btnSaveDdns = document.getElementById("btn-save-ddns");
+    const ddnsStatus = document.getElementById("ddns-status");
+
+    fetch("/api/v1/ddns/config")
+        .then(r => r.json())
+        .then(cfg => {
+            if (!cfg) return;
+            if (ddnsEnable) ddnsEnable.checked = !!cfg.enabled;
+            if (ddnsService) ddnsService.value = cfg.service || "duckdns";
+            if (ddnsDomain) ddnsDomain.value = cfg.domain || "";
+            if (ddnsToken) ddnsToken.value = cfg.token_or_pass || "";
+        })
+        .catch(e => console.warn("DDNS load failed", e));
+
+    btnSaveDdns?.addEventListener("click", async () => {
+        const payload = {
+            enabled: ddnsEnable.checked,
+            service: ddnsService.value,
+            domain: ddnsDomain.value.trim(),
+            token_or_pass: ddnsToken.value.trim(),
+        };
+        try {
+            const res = await fetch("/api/v1/ddns/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+                ddnsStatus.textContent = "✅ DDNS сохранен";
+                ddnsStatus.className = "text-xs text-emerald align-self-center";
+            }
+        } catch (e) {
+            ddnsStatus.textContent = "Ошибка: " + e.message;
+        }
+    });
+
+    // 8.4. Diagnostics
+    const diagTool = document.getElementById("diag-tool");
+    const diagTarget = document.getElementById("diag-target");
+    const btnRunDiag = document.getElementById("btn-run-diag");
+    const diagOutput = document.getElementById("diag-output");
+
+    btnRunDiag?.addEventListener("click", async () => {
+        const target = diagTarget?.value.trim();
+        if (!target) return;
+        const tool = diagTool?.value || "ping";
+
+        btnRunDiag.textContent = "⏳ Выполнение...";
+        diagOutput.textContent = `Запуск ${tool} для ${target}... Пожалуйста, подождите.\n`;
+
+        try {
+            const res = await fetch("/api/v1/diagnostics/run", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ tool, target })
+            });
+            const data = await res.json();
+            diagOutput.textContent = data.output || "Нет вывода";
+        } catch (e) {
+            diagOutput.textContent = "Ошибка выполнения: " + e.message;
+        } finally {
+            btnRunDiag.textContent = "▶ Запустить";
         }
     });
 }
