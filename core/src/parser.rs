@@ -11,6 +11,8 @@ pub enum ProxyType {
     Hysteria2,
     Trojan,
     Shadowsocks,
+    Tuic,
+    Shadowtls,
 }
 
 impl fmt::Display for ProxyType {
@@ -20,6 +22,8 @@ impl fmt::Display for ProxyType {
             ProxyType::Hysteria2 => write!(f, "hysteria2"),
             ProxyType::Trojan => write!(f, "trojan"),
             ProxyType::Shadowsocks => write!(f, "shadowsocks"),
+            ProxyType::Tuic => write!(f, "tuic"),
+            ProxyType::Shadowtls => write!(f, "shadowtls"),
         }
     }
 }
@@ -74,6 +78,10 @@ pub fn parse_proxy_uri(raw: &str) -> Result<ProxyConfig, String> {
         parse_vless(trimmed)
     } else if lower.starts_with("hysteria2://") || lower.starts_with("hy2://") {
         parse_hysteria2(trimmed)
+    } else if lower.starts_with("tuic://") {
+        parse_tuic(trimmed)
+    } else if lower.starts_with("shadowtls://") {
+        parse_shadowtls(trimmed)
     } else if lower.starts_with("trojan://") {
         parse_trojan(trimmed)
     } else if lower.starts_with("ss://") {
@@ -295,6 +303,101 @@ fn parse_shadowsocks(raw: &str) -> Result<ProxyConfig, String> {
     })
 }
 
+
+fn parse_tuic(raw: &str) -> Result<ProxyConfig, String> {
+    let parsed = Url::parse(raw).map_err(|e| format!("Invalid TUIC URL: {}", e))?;
+    let uuid = parsed.username().to_string();
+    let password = parsed.password().map(urlencoding_decode);
+    let raw_server = parsed
+        .host_str()
+        .ok_or_else(|| "TUIC URI missing server host".to_string())?;
+    let server = raw_server.trim_start_matches('[').trim_end_matches(']').to_string();
+    let server_port = parsed.port().unwrap_or(443);
+
+    let mut query_map = HashMap::new();
+    for (k, v) in parsed.query_pairs() {
+        query_map.insert(k.to_string(), v.to_string());
+    }
+
+    let sni = query_map.get("sni").cloned().or_else(|| Some(server.clone()));
+    let insecure = query_map.get("allow_insecure").map(|v| v == "1" || v == "true").unwrap_or(false);
+    let tag = parsed
+        .fragment()
+        .map(urlencoding_decode)
+        .unwrap_or_else(|| format!("tuic-{}-{}", server, server_port));
+
+    Ok(ProxyConfig {
+        proxy_type: ProxyType::Tuic,
+        tag,
+        server,
+        server_port,
+        uuid: if uuid.is_empty() { None } else { Some(uuid) },
+        password,
+        security: Some("tls".into()),
+        flow: None,
+        sni,
+        fingerprint: None,
+        public_key: None,
+        short_id: None,
+        network: Some("udp".into()),
+        path: None,
+        service_name: None,
+        insecure,
+        up_mbps: None,
+        down_mbps: None,
+        raw_uri: raw.to_string(),
+        extra_params: query_map,
+    })
+}
+
+fn parse_shadowtls(raw: &str) -> Result<ProxyConfig, String> {
+    let parsed = Url::parse(raw).map_err(|e| format!("Invalid ShadowTLS URL: {}", e))?;
+    let password = if !parsed.username().is_empty() {
+        Some(urlencoding_decode(parsed.username()))
+    } else {
+        parsed.password().map(urlencoding_decode)
+    };
+    let raw_server = parsed
+        .host_str()
+        .ok_or_else(|| "ShadowTLS URI missing server host".to_string())?;
+    let server = raw_server.trim_start_matches('[').trim_end_matches(']').to_string();
+    let server_port = parsed.port().unwrap_or(443);
+
+    let mut query_map = HashMap::new();
+    for (k, v) in parsed.query_pairs() {
+        query_map.insert(k.to_string(), v.to_string());
+    }
+
+    let sni = query_map.get("sni").cloned().or_else(|| Some("apple.com".to_string()));
+    let tag = parsed
+        .fragment()
+        .map(urlencoding_decode)
+        .unwrap_or_else(|| format!("shadowtls-{}-{}", server, server_port));
+
+    Ok(ProxyConfig {
+        proxy_type: ProxyType::Shadowtls,
+        tag,
+        server,
+        server_port,
+        uuid: None,
+        password,
+        security: Some("tls".into()),
+        flow: None,
+        sni,
+        fingerprint: None,
+        public_key: None,
+        short_id: None,
+        network: Some("tcp".into()),
+        path: None,
+        service_name: None,
+        insecure: false,
+        up_mbps: None,
+        down_mbps: None,
+        raw_uri: raw.to_string(),
+        extra_params: query_map,
+    })
+}
+
 fn urlencoding_decode(val: &str) -> String {
     percent_encoding::percent_decode_str(val)
         .decode_utf8_lossy()
@@ -376,6 +479,32 @@ mod tests {
         assert_eq!(cfg.server, "1.1.1.1");
         assert_eq!(cfg.password.as_deref(), Some("pwd123"));
         assert_eq!(cfg.tag, "ShortHy2");
+    }
+
+    
+    #[test]
+    fn test_tuic_v5() {
+        let uri = "tuic://b831381d-6324-4d53-ad4f-8cda48b30811:MyTuicPass@198.51.100.99:8443?congestion_control=bbr&alpn=h3&sni=fast.cdn.net#Tuic-BBR";
+        let cfg = parse_proxy_uri(uri).expect("Should parse TUIC v5");
+        assert_eq!(cfg.proxy_type, ProxyType::Tuic);
+        assert_eq!(cfg.server, "198.51.100.99");
+        assert_eq!(cfg.server_port, 8443);
+        assert_eq!(cfg.uuid.as_deref(), Some("b831381d-6324-4d53-ad4f-8cda48b30811"));
+        assert_eq!(cfg.password.as_deref(), Some("MyTuicPass"));
+        assert_eq!(cfg.sni.as_deref(), Some("fast.cdn.net"));
+        assert_eq!(cfg.extra_params.get("congestion_control").map(|s| s.as_str()), Some("bbr"));
+        assert_eq!(cfg.tag, "Tuic-BBR");
+    }
+
+    #[test]
+    fn test_shadowtls_v3() {
+        let uri = "shadowtls://ShadowSecret@198.51.100.50:443?sni=gateway.icloud.com&version=3#ShadowTLS-Node";
+        let cfg = parse_proxy_uri(uri).expect("Should parse ShadowTLS v3");
+        assert_eq!(cfg.proxy_type, ProxyType::Shadowtls);
+        assert_eq!(cfg.server, "198.51.100.50");
+        assert_eq!(cfg.password.as_deref(), Some("ShadowSecret"));
+        assert_eq!(cfg.sni.as_deref(), Some("gateway.icloud.com"));
+        assert_eq!(cfg.tag, "ShadowTLS-Node");
     }
 
     #[test]

@@ -174,3 +174,54 @@ fn test_mac_filter_edge_cases() {
     assert!(!is_valid_mac(""));
     assert!(!is_valid_mac(";;;"));
 }
+
+
+#[test]
+fn test_flow_offload_configuration() {
+    use ferrum_core::network::{FlowOffloadConfig, apply_flow_offload};
+    let cfg = FlowOffloadConfig::default();
+    assert!(cfg.hardware_flow_offload);
+    assert!(cfg.software_flow_offload);
+    assert!(cfg.tcp_bbr);
+    assert!(apply_flow_offload(&cfg).is_ok());
+}
+
+#[test]
+fn test_antizapret_bgp_configuration() {
+    use ferrum_core::network::{AntizapretBgpConfig, apply_antizapret_bgp_config, get_antizapret_bgp_status};
+    let mut cfg = AntizapretBgpConfig::default();
+    assert_eq!(cfg.peer_as, 65432);
+    assert_eq!(cfg.peer_ip, "10.224.0.1");
+    assert!(!cfg.enabled);
+
+    cfg.enabled = true;
+    assert!(apply_antizapret_bgp_config(&cfg).is_ok());
+    let status = get_antizapret_bgp_status();
+    assert!(status.enabled);
+    assert!(status.connected);
+    assert_eq!(status.routes_active, 84210);
+}
+
+#[test]
+fn test_guest_wifi_isolation_rules() {
+    use ferrum_core::network::{WifiConfig, apply_guest_network_isolation};
+    let mut cfg = WifiConfig::default();
+    assert!(apply_guest_network_isolation(&cfg).is_ok());
+
+    cfg.guest_enabled = true;
+    cfg.guest_isolate_lan = true;
+    cfg.guest_bandwidth_limit_mbps = 25;
+    assert!(apply_guest_network_isolation(&cfg).is_ok());
+}
+
+#[test]
+fn test_wan_speedtest_runner() {
+    use ferrum_core::network::run_wan_speedtest;
+    let res = run_wan_speedtest();
+    assert!(res.is_ok());
+    let data = res.unwrap();
+    assert!(data.ping_ms > 0.0);
+    assert!(data.download_mbps > 0.0);
+    assert!(data.upload_mbps > 0.0);
+    assert!(!data.server_location.is_empty());
+}

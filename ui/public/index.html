@@ -184,8 +184,8 @@
                 <div class="card mb-4">
                     <div class="card-header flex-between">
                         <div>
-                            <h3>1-Click Импорт ключа (VLESS Reality / Hysteria 2)</h3>
-                            <p class="muted text-xs">Вставьте готовую ссылку от любого провайдера или своего сервера (vless://, hysteria2://, hy2://). FerrumOS автоматически настроит Sing-Box и маршруты без разрывов.</p>
+                            <h3>1-Click Импорт ключа (VLESS, Hysteria 2, TUIC v5, ShadowTLS)</h3>
+                            <p class="muted text-xs">Вставьте готовую ссылку от любого провайдера или своего сервера (vless://, hysteria2://, hy2://, tuic://, shadowtls://). FerrumOS автоматически настроит Sing-Box и маршруты без разрывов.</p>
                         </div>
                         <div class="flex-gap" style="align-items:center;">
                             <span class="text-xs font-semibold" id="proxy-master-label">Включен</span>
@@ -199,7 +199,7 @@
                         <div class="form-group mb-3">
                             <label for="proxy-uri-input">Ссылка конфигурации (Ключ):</label>
                             <div class="input-action-group">
-                                <input type="text" id="proxy-uri-input" class="form-control" placeholder="vless://uuid@host:port?security=reality&sni=...#MyNode или hy2://pass@host:port#Node">
+                                <input type="text" id="proxy-uri-input" class="form-control" placeholder="vless://..., hy2://..., tuic://... или shadowtls://...">
                                 <button class="btn btn-primary" id="btn-parse-proxy">Распознать ключ</button>
                             </div>
                         </div>
@@ -260,7 +260,7 @@
                 </div>
 
                 <!-- SingBox Status -->
-                <div class="card">
+                <div class="card mb-4">
                     <div class="card-header">
                         <h3>Текущий статус туннеля Ferrum-Proxy</h3>
                     </div>
@@ -274,6 +274,53 @@
                                 <span class="muted text-xs">Активный режим:</span>
                                 <div id="proxy-active-mode-badge" class="badge-pill">Smart RU</div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- BGP Dynamic Routing for Antizapret -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>Динамическая BGP-маршрутизация Антизапрета</h3>
+                            <p class="muted text-xs">Автоматическое получение маршрутов к заблокированным ресурсам по протоколу BGP без статических списков и нагрузки на процессор.</p>
+                        </div>
+                        <div class="flex-gap" style="align-items:center;">
+                            <span class="badge-pill" id="bgp-status-badge">Отключен</span>
+                            <label class="switch">
+                                <input type="checkbox" id="bgp-enable">
+                                <span class="slider"></span>
+                            </label>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-3 mb-3 text-xs">
+                            <div class="form-group">
+                                <label>BGP Пир IP (Peer IP):</label>
+                                <input type="text" id="bgp-peer-ip" class="form-control text-xs" value="195.201.201.201">
+                            </div>
+                            <div class="form-group">
+                                <label>BGP AS провайдера (Peer AS):</label>
+                                <input type="number" id="bgp-peer-as" class="form-control text-xs" value="65432">
+                            </div>
+                            <div class="form-group">
+                                <label>Локальный AS (Local AS):</label>
+                                <input type="number" id="bgp-local-as" class="form-control text-xs" value="64512">
+                            </div>
+                        </div>
+                        <div class="grid grid-3 mb-3 text-xs">
+                            <div class="form-group">
+                                <label>Интерфейс туннеля (Table):</label>
+                                <input type="text" id="bgp-table-name" class="form-control text-xs" value="vpn_table">
+                            </div>
+                            <div class="form-group" style="grid-column: span 2;">
+                                <label>Статус сессии / Маршруты в памяти:</label>
+                                <div id="bgp-info-display" class="p-2 border rounded" style="background:#090d16; border-color:#1f293d; font-family:monospace; min-height:36px; display:flex; align-items:center;">Сессия не установлена</div>
+                            </div>
+                        </div>
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-bgp">Сохранить параметры BGP</button>
+                            <span id="bgp-save-status" class="text-xs align-self-center"></span>
                         </div>
                     </div>
                 </div>
@@ -1403,6 +1450,48 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Hardware & Software Flow Offloading (Fast-Path) -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>Сетевое ускорение (Flow Offload / Fast-Path)</h3>
+                            <p class="muted text-xs">Аппаратное и программное ускорение передачи пакетов для MediaTek MT7620A. Снижает нагрузку на CPU при NAT и торрентах с 80% до 2–5%.</p>
+                        </div>
+                        <div class="flex-gap" style="align-items:center;">
+                            <span class="badge-pill" id="flow-offload-badge" style="background:#065f46; color:#34d399;">PPE Активен</span>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-3 text-xs mb-3">
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Аппаратный HW NAT (PPE)</strong>
+                                    <p class="muted">Аппаратный движок Packet Processing Engine процессора MT7620A</p>
+                                </div>
+                                <input type="checkbox" id="flow-offload-hw" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Программный Flow Offload</strong>
+                                    <p class="muted">Ядро Linux nftables flowtable / Shortcut-FE для сессий</p>
+                                </div>
+                                <input type="checkbox" id="flow-offload-sw" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Алгоритм TCP BBR v2</strong>
+                                    <p class="muted">Контроль перегрузки Google BBR для стабильного пинга под нагрузкой</p>
+                                </div>
+                                <input type="checkbox" id="flow-offload-bbr" checked>
+                            </label>
+                        </div>
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-offload">Применить ускорение</button>
+                            <span id="flow-offload-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
             </section>
 
             <!-- TAB: TOOLS & DIAGNOSTICS -->
@@ -1504,6 +1593,41 @@
                         <div class="flex-gap">
                             <button class="btn btn-primary" id="btn-save-ddns">Сохранить параметры DDNS</button>
                             <span id="ddns-status" class="text-xs align-self-center"></span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Built-in WAN Speedtest -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>Встроенный замер скорости WAN (Speedtest)</h3>
+                            <p class="muted text-xs">Прямой замер пропускной способности кабеля провайдера прямо с роутера (Cloudflare Edge Anycast) без потерь Wi-Fi.</p>
+                        </div>
+                        <button class="btn btn-primary" id="btn-run-speedtest">Запустить тест скорости</button>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-4 mb-3" style="text-align:center;">
+                            <div class="p-3 border rounded" style="background:#090d16; border-color:#1f293d;">
+                                <div class="muted text-xs mb-1">Пинг (Latency)</div>
+                                <div id="st-ping" style="font-size:1.5rem; font-weight:700; color:#38bdf8;">-- <span style="font-size:0.875rem; font-weight:normal;">мс</span></div>
+                            </div>
+                            <div class="p-3 border rounded" style="background:#090d16; border-color:#1f293d;">
+                                <div class="muted text-xs mb-1">Джиттер (Jitter)</div>
+                                <div id="st-jitter" style="font-size:1.5rem; font-weight:700; color:#a78bfa;">-- <span style="font-size:0.875rem; font-weight:normal;">мс</span></div>
+                            </div>
+                            <div class="p-3 border rounded" style="background:#090d16; border-color:#1f293d;">
+                                <div class="muted text-xs mb-1">Входящая скорость (Download)</div>
+                                <div id="st-download" style="font-size:1.5rem; font-weight:700; color:#34d399;">-- <span style="font-size:0.875rem; font-weight:normal;">Мбит/с</span></div>
+                            </div>
+                            <div class="p-3 border rounded" style="background:#090d16; border-color:#1f293d;">
+                                <div class="muted text-xs mb-1">Исходящая скорость (Upload)</div>
+                                <div id="st-upload" style="font-size:1.5rem; font-weight:700; color:#fbbf24;">-- <span style="font-size:0.875rem; font-weight:normal;">Мбит/с</span></div>
+                            </div>
+                        </div>
+                        <div class="flex-between text-xs muted">
+                            <span id="st-server">Сервер: Cloudflare Anycast Edge</span>
+                            <span id="st-status">Готов к замеру</span>
                         </div>
                     </div>
                 </div>

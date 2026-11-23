@@ -300,7 +300,7 @@ function initProxyManager() {
     parseBtn?.addEventListener("click", async () => {
         const uri = uriInput.value.trim();
         if (!uri) {
-            alert("Пожалуйста, вставьте ссылку vless:// или hysteria2://");
+            alert("Пожалуйста, вставьте ссылку vless://, hysteria2://, hy2://, tuic:// или shadowtls://");
             return;
         }
 
@@ -403,6 +403,83 @@ function initProxyManager() {
             setTimedStatus(statusSpan, "Ошибка: " + e.message, "error", 4000);
         } finally {
             applyBtn.textContent = "Применить конфигурацию туннеля";
+        }
+    });
+
+    // ----------------------------------------------------
+    // BGP Dynamic Routing for Antizapret
+    // ----------------------------------------------------
+    const bgpEnable = document.getElementById("bgp-enable");
+    const bgpPeerIp = document.getElementById("bgp-peer-ip");
+    const bgpPeerAs = document.getElementById("bgp-peer-as");
+    const bgpLocalAs = document.getElementById("bgp-local-as");
+    const bgpTableName = document.getElementById("bgp-table-name");
+    const bgpStatusBadge = document.getElementById("bgp-status-badge");
+    const bgpInfoDisplay = document.getElementById("bgp-info-display");
+    const btnSaveBgp = document.getElementById("btn-save-bgp");
+    const bgpSaveStatus = document.getElementById("bgp-save-status");
+
+    fetch("/api/v1/bgp/status")
+        .then(r => r.json())
+        .then(data => {
+            if (!data) return;
+            if (bgpEnable) bgpEnable.checked = !!data.enabled;
+            if (bgpPeerIp && data.peer) {
+                const parts = data.peer.split(":");
+                bgpPeerIp.value = parts[0] || "10.224.0.1";
+                if (bgpPeerAs && parts[1]) bgpPeerAs.value = parseInt(parts[1], 10) || 65432;
+            }
+
+            if (bgpStatusBadge) {
+                if (data.connected) {
+                    bgpStatusBadge.textContent = "BGP Подключен";
+                    bgpStatusBadge.style.background = "#065f46";
+                    bgpStatusBadge.style.color = "#34d399";
+                } else if (data.enabled) {
+                    bgpStatusBadge.textContent = "Подключение...";
+                    bgpStatusBadge.style.background = "#78350f";
+                    bgpStatusBadge.style.color = "#fbbf24";
+                } else {
+                    bgpStatusBadge.textContent = "Отключен";
+                    bgpStatusBadge.style.background = "#1f293d";
+                    bgpStatusBadge.style.color = "#94a3b8";
+                }
+            }
+            if (bgpInfoDisplay) {
+                bgpInfoDisplay.textContent = `Маршрутов: ${data.routes_active || 0} | ${data.status_text || ""}`;
+            }
+        })
+        .catch(e => console.warn("BGP status load failed", e));
+
+    btnSaveBgp?.addEventListener("click", async () => {
+        const payload = {
+            enabled: bgpEnable ? bgpEnable.checked : false,
+            peer_ip: bgpPeerIp ? bgpPeerIp.value.trim() : "10.224.0.1",
+            peer_as: bgpPeerAs ? (parseInt(bgpPeerAs.value, 10) || 65432) : 65432,
+            auto_sync_interval_hours: 6
+        };
+        btnSaveBgp.textContent = "Применение...";
+        try {
+            const res = await fetch("/api/v1/bgp/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+                setTimedStatus(bgpSaveStatus, "Параметры BGP сохранены и применены", "success", 3500);
+                if (bgpStatusBadge) {
+                    bgpStatusBadge.textContent = payload.enabled ? "BGP Подключен" : "Отключен";
+                    bgpStatusBadge.style.background = payload.enabled ? "#065f46" : "#1f293d";
+                    bgpStatusBadge.style.color = payload.enabled ? "#34d399" : "#94a3b8";
+                }
+            } else {
+                setTimedStatus(bgpSaveStatus, data.message || "Ошибка сохранения", "error", 4000);
+            }
+        } catch (e) {
+            setTimedStatus(bgpSaveStatus, "Ошибка: " + e.message, "error", 4000);
+        } finally {
+            btnSaveBgp.textContent = "Сохранить параметры BGP";
         }
     });
 }
@@ -1447,6 +1524,82 @@ function initNetworkManager() {
             btnSaveRoutes.textContent = "Применить маршруты";
         }
     });
+
+    // ----------------------------------------------------
+    // Hardware & Software Flow Offloading (Fast-Path)
+    // ----------------------------------------------------
+    const flowHw = document.getElementById("flow-offload-hw");
+    const flowSw = document.getElementById("flow-offload-sw");
+    const flowBbr = document.getElementById("flow-offload-bbr");
+    const flowBadge = document.getElementById("flow-offload-badge");
+    const btnSaveOffload = document.getElementById("btn-save-offload");
+    const flowStatus = document.getElementById("flow-offload-status");
+
+    fetch("/api/v1/network/offload")
+        .then(r => r.json())
+        .then(cfg => {
+            if (!cfg) return;
+            if (flowHw) flowHw.checked = !!cfg.hardware_flow_offload;
+            if (flowSw) flowSw.checked = !!cfg.software_flow_offload;
+            if (flowBbr) flowBbr.checked = !!cfg.tcp_bbr;
+            if (flowBadge) {
+                if (cfg.hardware_flow_offload) {
+                    flowBadge.textContent = "PPE Активен";
+                    flowBadge.style.background = "#065f46";
+                    flowBadge.style.color = "#34d399";
+                } else if (cfg.software_flow_offload) {
+                    flowBadge.textContent = "SW FastPath";
+                    flowBadge.style.background = "#0369a1";
+                    flowBadge.style.color = "#38bdf8";
+                } else {
+                    flowBadge.textContent = "Отключено";
+                    flowBadge.style.background = "#1f293d";
+                    flowBadge.style.color = "#94a3b8";
+                }
+            }
+        })
+        .catch(e => console.warn("Flow offload load failed", e));
+
+    btnSaveOffload?.addEventListener("click", async () => {
+        const payload = {
+            software_flow_offload: flowSw ? flowSw.checked : true,
+            hardware_flow_offload: flowHw ? flowHw.checked : true,
+            tcp_bbr: flowBbr ? flowBbr.checked : true
+        };
+        btnSaveOffload.textContent = "Применение...";
+        try {
+            const res = await fetch("/api/v1/network/offload", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (data.success) {
+                setTimedStatus(flowStatus, "Сетевое ускорение успешно применено", "success", 3500);
+                if (flowBadge) {
+                    if (payload.hardware_flow_offload) {
+                        flowBadge.textContent = "PPE Активен";
+                        flowBadge.style.background = "#065f46";
+                        flowBadge.style.color = "#34d399";
+                    } else if (payload.software_flow_offload) {
+                        flowBadge.textContent = "SW FastPath";
+                        flowBadge.style.background = "#0369a1";
+                        flowBadge.style.color = "#38bdf8";
+                    } else {
+                        flowBadge.textContent = "Отключено";
+                        flowBadge.style.background = "#1f293d";
+                        flowBadge.style.color = "#94a3b8";
+                    }
+                }
+            } else {
+                setTimedStatus(flowStatus, data.message || "Ошибка сохранения", "error", 4000);
+            }
+        } catch (e) {
+            setTimedStatus(flowStatus, "Ошибка: " + e.message, "error", 4000);
+        } finally {
+            btnSaveOffload.textContent = "Применить ускорение";
+        }
+    });
 }
 
 // ----------------------------------------------------
@@ -1802,6 +1955,50 @@ function initToolsManager() {
             diagOutput.textContent = "Ошибка выполнения: " + e.message;
         } finally {
             btnRunDiag.textContent = "Выполнить диагностику";
+        }
+    });
+
+    // ----------------------------------------------------
+    // Built-in WAN Speedtest
+    // ----------------------------------------------------
+    const btnRunSpeedtest = document.getElementById("btn-run-speedtest");
+    const stPing = document.getElementById("st-ping");
+    const stJitter = document.getElementById("st-jitter");
+    const stDownload = document.getElementById("st-download");
+    const stUpload = document.getElementById("st-upload");
+    const stServer = document.getElementById("st-server");
+    const stStatus = document.getElementById("st-status");
+
+    btnRunSpeedtest?.addEventListener("click", async () => {
+        btnRunSpeedtest.disabled = true;
+        btnRunSpeedtest.textContent = "Тестирование...";
+        if (stStatus) stStatus.textContent = "Измерение задержки, скачивания и отдачи...";
+        if (stPing) stPing.innerHTML = `-- <span style="font-size:0.875rem; font-weight:normal;">мс</span>`;
+        if (stJitter) stJitter.innerHTML = `-- <span style="font-size:0.875rem; font-weight:normal;">мс</span>`;
+        if (stDownload) stDownload.innerHTML = `-- <span style="font-size:0.875rem; font-weight:normal;">Мбит/с</span>`;
+        if (stUpload) stUpload.innerHTML = `-- <span style="font-size:0.875rem; font-weight:normal;">Мбит/с</span>`;
+
+        try {
+            const res = await fetch("/api/v1/diagnostics/speedtest", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" }
+            });
+            const data = await res.json();
+            if (data && typeof data.ping_ms === "number") {
+                if (stPing) stPing.innerHTML = `${data.ping_ms.toFixed(1)} <span style="font-size:0.875rem; font-weight:normal;">мс</span>`;
+                if (stJitter) stJitter.innerHTML = `${data.jitter_ms.toFixed(1)} <span style="font-size:0.875rem; font-weight:normal;">мс</span>`;
+                if (stDownload) stDownload.innerHTML = `${data.download_mbps.toFixed(2)} <span style="font-size:0.875rem; font-weight:normal;">Мбит/с</span>`;
+                if (stUpload) stUpload.innerHTML = `${data.upload_mbps.toFixed(2)} <span style="font-size:0.875rem; font-weight:normal;">Мбит/с</span>`;
+                if (stServer) stServer.textContent = "Сервер: " + (data.server_name || "Cloudflare Anycast");
+                if (stStatus) stStatus.textContent = "Замер успешно завершен";
+            } else {
+                if (stStatus) stStatus.textContent = "Ошибка получения результатов замера";
+            }
+        } catch (e) {
+            if (stStatus) stStatus.textContent = "Ошибка: " + e.message;
+        } finally {
+            btnRunSpeedtest.disabled = false;
+            btnRunSpeedtest.textContent = "Запустить тест скорости";
         }
     });
 }

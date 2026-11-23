@@ -76,6 +76,32 @@ pub struct Hysteria2Obfs {
     pub password: String,
 }
 
+
+impl Default for OutboundConfig {
+    fn default() -> Self {
+        OutboundConfig {
+            outbound_type: "direct".into(),
+            tag: "direct".into(),
+            server: None,
+            server_port: None,
+            uuid: None,
+            password: None,
+            flow: None,
+            tls: None,
+            transport: None,
+            network: None,
+            packet_encoding: None,
+            obfs: None,
+            server_ports: None,
+            up_mbps: None,
+            down_mbps: None,
+            congestion_control: None,
+            udp_relay_mode: None,
+            version: None,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OutboundConfig {
     #[serde(rename = "type")]
@@ -107,6 +133,12 @@ pub struct OutboundConfig {
     pub up_mbps: Option<u32>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub down_mbps: Option<u32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub congestion_control: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub udp_relay_mode: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub version: Option<u32>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -369,6 +401,9 @@ pub fn generate_singbox_config(
                 server_ports: None,
                 up_mbps: None,
                 down_mbps: None,
+                congestion_control: None,
+                udp_relay_mode: None,
+                version: None,
             },
             OutboundConfig {
                 outbound_type: "block".into(),
@@ -386,6 +421,9 @@ pub fn generate_singbox_config(
                 server_ports: None,
                 up_mbps: None,
                 down_mbps: None,
+                congestion_control: None,
+                udp_relay_mode: None,
+                version: None,
             },
             OutboundConfig {
                 outbound_type: "dns".into(),
@@ -403,6 +441,9 @@ pub fn generate_singbox_config(
                 server_ports: None,
                 up_mbps: None,
                 down_mbps: None,
+                congestion_control: None,
+                udp_relay_mode: None,
+                version: None,
             },
         ],
         route: RouteConfig {
@@ -484,6 +525,9 @@ fn build_proxy_outbound(proxy: &ProxyConfig) -> Result<OutboundConfig, String> {
                 server_ports: None,
                 up_mbps: None,
                 down_mbps: None,
+                congestion_control: None,
+                udp_relay_mode: None,
+                version: None,
             })
         }
         ProxyType::Hysteria2 => {
@@ -523,6 +567,9 @@ fn build_proxy_outbound(proxy: &ProxyConfig) -> Result<OutboundConfig, String> {
                 server_ports,
                 up_mbps: proxy.up_mbps,
                 down_mbps: proxy.down_mbps,
+                congestion_control: None,
+                udp_relay_mode: None,
+                version: None,
             })
         }
         ProxyType::Trojan => {
@@ -549,10 +596,79 @@ fn build_proxy_outbound(proxy: &ProxyConfig) -> Result<OutboundConfig, String> {
                 server_ports: None,
                 up_mbps: None,
                 down_mbps: None,
+                congestion_control: None,
+                udp_relay_mode: None,
+                version: None,
             })
         }
         ProxyType::Shadowsocks => {
             Err("Shadowsocks direct outbound not configured for sing-box".into())
+        }
+        ProxyType::Tuic => {
+            let alpn = proxy.extra_params.get("alpn").map(|s| s.split(',').map(|p| p.trim().to_string()).collect::<Vec<_>>())
+                .or_else(|| Some(vec!["h3".to_string()]));
+            let cc = proxy.extra_params.get("congestion_control").cloned().or_else(|| Some("bbr".into()));
+            let udp_relay = proxy.extra_params.get("udp_relay_mode").cloned().or_else(|| Some("native".into()));
+
+            Ok(OutboundConfig {
+                outbound_type: "tuic".into(),
+                tag: proxy.tag.clone(),
+                server: Some(proxy.server.clone()),
+                server_port: Some(proxy.server_port),
+                uuid: proxy.uuid.clone(),
+                password: proxy.password.clone(),
+                flow: None,
+                tls: Some(TlsConfig {
+                    enabled: true,
+                    server_name: proxy.sni.clone().or_else(|| Some(proxy.server.clone())),
+                    insecure: proxy.insecure,
+                    alpn,
+                    utls: None,
+                    reality: None,
+                }),
+                transport: None,
+                network: None,
+                packet_encoding: None,
+                obfs: None,
+                server_ports: None,
+                up_mbps: proxy.up_mbps,
+                down_mbps: proxy.down_mbps,
+                congestion_control: cc,
+                udp_relay_mode: udp_relay,
+                version: None,
+            })
+        }
+        ProxyType::Shadowtls => {
+            let version = proxy.extra_params.get("version").and_then(|v| v.parse::<u32>().ok()).unwrap_or(3);
+            let sni = proxy.sni.clone().or_else(|| Some("apple.com".to_string()));
+
+            Ok(OutboundConfig {
+                outbound_type: "shadowtls".into(),
+                tag: proxy.tag.clone(),
+                server: Some(proxy.server.clone()),
+                server_port: Some(proxy.server_port),
+                uuid: None,
+                password: proxy.password.clone(),
+                flow: None,
+                tls: Some(TlsConfig {
+                    enabled: true,
+                    server_name: sni,
+                    insecure: false,
+                    alpn: None,
+                    utls: None,
+                    reality: None,
+                }),
+                transport: None,
+                network: None,
+                packet_encoding: None,
+                obfs: None,
+                server_ports: None,
+                up_mbps: None,
+                down_mbps: None,
+                congestion_control: None,
+                udp_relay_mode: None,
+                version: Some(version),
+            })
         }
     }
 }
@@ -561,6 +677,28 @@ fn build_proxy_outbound(proxy: &ProxyConfig) -> Result<OutboundConfig, String> {
 mod tests {
     use super::*;
     use crate::parser::parse_proxy_uri;
+
+    
+    #[test]
+    fn test_generate_tuic_outbound() {
+        let uri = "tuic://b831381d-6324-4d53-ad4f-8cda48b30811:MyPass@198.51.100.99:8443?congestion_control=bbr&sni=fast.cdn.net#Tuic-Node";
+        let proxy = crate::parser::parse_proxy_uri(uri).expect("Parse TUIC");
+        let cfg = generate_singbox_config(&proxy, RoutingMode::Global, &[], &[]).expect("Generate singbox config");
+        let outbound = cfg.outbounds.iter().find(|o| o.tag == "Tuic-Node").expect("Tuic outbound");
+        assert_eq!(outbound.outbound_type, "tuic");
+        assert_eq!(outbound.congestion_control.as_deref(), Some("bbr"));
+        assert_eq!(outbound.server.as_deref(), Some("198.51.100.99"));
+    }
+
+    #[test]
+    fn test_generate_shadowtls_outbound() {
+        let uri = "shadowtls://ShadowSecret@198.51.100.50:443?sni=gateway.icloud.com&version=3#Shadow-Node";
+        let proxy = crate::parser::parse_proxy_uri(uri).expect("Parse ShadowTLS");
+        let cfg = generate_singbox_config(&proxy, RoutingMode::SmartRu, &[], &[]).expect("Generate singbox config");
+        let outbound = cfg.outbounds.iter().find(|o| o.tag == "Shadow-Node").expect("ShadowTLS outbound");
+        assert_eq!(outbound.outbound_type, "shadowtls");
+        assert_eq!(outbound.version, Some(3));
+    }
 
     #[test]
     fn test_generate_vless_smart_ru() {

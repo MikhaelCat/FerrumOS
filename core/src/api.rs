@@ -9,7 +9,10 @@ use crate::network::{
     StaticRoute, apply_static_routes, get_switch_port_status,
     send_wake_on_lan, PingWatchdogConfig, apply_watchdog_config,
     DdnsConfig, apply_ddns_config, DiagnosticReq, run_diagnostic,
-    WifiNeighborNetwork, ChannelCongestion
+    WifiNeighborNetwork, ChannelCongestion,
+    FlowOffloadConfig, apply_flow_offload, load_flow_offload_config,
+    AntizapretBgpConfig, get_antizapret_bgp_status, apply_antizapret_bgp_config,
+    run_wan_speedtest
 };
 use crate::parser::{parse_proxy_uri, ProxyConfig};
 use crate::singbox::{generate_singbox_config, RoutingMode, SingBoxConfig};
@@ -714,6 +717,54 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             } else {
                 let resp = GenericResp { success: false, message: "Некорректный запрос диагностики".into() };
                 respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+
+        // REST API: Network Flow Offloading (Hardware PPE & Software Fast-Path)
+        (Method::Get, "/api/v1/network/offload") => {
+            let cfg = load_flow_offload_config();
+            respond_json(request, &cfg, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/network/offload") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<FlowOffloadConfig>(&body) {
+                let _ = apply_flow_offload(&new_cfg);
+                let resp = GenericResp { success: true, message: "Аппаратное и программное ускорение потоков (Flow Offload) применено".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp { success: false, message: "Некорректный JSON Flow Offload".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: Antizapret BGP Dynamic Routing
+        (Method::Get, "/api/v1/bgp/status") => {
+            let status = get_antizapret_bgp_status();
+            respond_json(request, &status, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/bgp/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<AntizapretBgpConfig>(&body) {
+                let _ = apply_antizapret_bgp_config(&new_cfg);
+                let resp = GenericResp { success: true, message: "Параметры BGP-маршрутизации сохранены".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp { success: false, message: "Некорректный JSON BGP".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: WAN Speedtest Runner
+        (Method::Post, "/api/v1/diagnostics/speedtest") => {
+            match run_wan_speedtest() {
+                Ok(res) => respond_json(request, &res, cors_header, content_type_json),
+                Err(e) => {
+                    let resp = GenericResp { success: false, message: format!("Ошибка теста скорости: {}", e) };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                }
             }
         }
 
