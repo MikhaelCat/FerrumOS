@@ -43,14 +43,17 @@ chmod +x "${WORK_DIR}/romfs/usr/bin/ferrum-core"
 # Install Init Scripts
 cp "${ROOT_DIR}/init/S01switch" "${WORK_DIR}/romfs/etc/init.d/S01switch"
 cp "${ROOT_DIR}/init/S10network" "${WORK_DIR}/romfs/etc/init.d/S10network"
+cp "${ROOT_DIR}/init/S15ssh" "${WORK_DIR}/romfs/etc/init.d/S15ssh"
 cp "${ROOT_DIR}/init/S20ferrum" "${WORK_DIR}/romfs/etc/init.d/S20ferrum"
 cp "${ROOT_DIR}/init/S30zapret" "${WORK_DIR}/romfs/etc/init.d/S30zapret"
 cp "${ROOT_DIR}/init/S40singbox" "${WORK_DIR}/romfs/etc/init.d/S40singbox"
 chmod +x "${WORK_DIR}/romfs/etc/init.d/"*
 
-# Ensure S20ferrum is started automatically in rc
-if [ -f "${WORK_DIR}/romfs/etc_ro/rc.d/S20ferrum" ]; then
+# Ensure S15ssh and S20ferrum are started automatically in rc
+if [ -d "${WORK_DIR}/romfs/etc_ro/rc.d" ]; then
+    cp "${ROOT_DIR}/init/S15ssh" "${WORK_DIR}/romfs/etc_ro/rc.d/S15ssh"
     cp "${ROOT_DIR}/init/S20ferrum" "${WORK_DIR}/romfs/etc_ro/rc.d/S20ferrum"
+    chmod +x "${WORK_DIR}/romfs/etc_ro/rc.d/"*
 fi
 
 echo "[4/5] Packing SquashFS XZ rootfs..."

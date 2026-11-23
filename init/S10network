@@ -29,6 +29,18 @@ fi
 # Set default LAN IP
 ifconfig br0 192.168.1.1 netmask 255.255.255.0 up
 
+# System & Memory Optimizations for 64MB RAM router
+sysctl -w vm.min_free_kbytes=2048 2>/dev/null || true
+sysctl -w vm.dirty_ratio=10 2>/dev/null || true
+sysctl -w vm.dirty_background_ratio=5 2>/dev/null || true
+sysctl -w vm.swappiness=0 2>/dev/null || true
+sysctl -w net.core.somaxconn=512 2>/dev/null || true
+sysctl -w net.ipv4.tcp_fin_timeout=15 2>/dev/null || true
+sysctl -w net.ipv4.tcp_tw_reuse=1 2>/dev/null || true
+
+# Hardware NAT / PPE Acceleration: 0% CPU for line-rate routing
+echo 1 > /proc/sys/net/nat/fast_nat 2>/dev/null || true
+
 # WAN configuration (DHCP client on eth2.2)
 udhcpc -i eth2.2 -p /var/run/udhcpc.eth2.2.pid -s /usr/share/udhcpc/default.script -b &
 

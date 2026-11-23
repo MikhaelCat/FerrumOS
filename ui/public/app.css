@@ -520,3 +520,22 @@ input:checked + .slider:before {
 .align-self-center {
     align-self: center;
 }
+
+/* Authentication Modal */
+.login-modal {
+    position: fixed;
+    top: 0; left: 0; right: 0; bottom: 0;
+    background: rgba(3, 7, 18, 0.94);
+    backdrop-filter: blur(8px);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 9999;
+}
+.login-box {
+    width: 380px;
+    max-width: 90%;
+    background: #0d121f;
+    border: 1px solid #1f293d;
+    box-shadow: 0 20px 35px -5px rgba(0, 0, 0, 0.7);
+}

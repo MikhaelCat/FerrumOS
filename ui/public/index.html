@@ -182,9 +182,18 @@
             <!-- TAB: VLESS & HYSTERIA2 -->
             <section id="tab-proxy" class="tab-pane">
                 <div class="card mb-4">
-                    <div class="card-header">
-                        <h3>1-Click Импорт ключа (VLESS Reality / Hysteria 2)</h3>
-                        <p class="muted text-xs">Вставьте готовую ссылку от любого провайдера или своего сервера (vless://, hysteria2://, hy2://). FerrumOS автоматически настроит Sing-Box и маршруты без разрывов.</p>
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>1-Click Импорт ключа (VLESS Reality / Hysteria 2)</h3>
+                            <p class="muted text-xs">Вставьте готовую ссылку от любого провайдера или своего сервера (vless://, hysteria2://, hy2://). FerrumOS автоматически настроит Sing-Box и маршруты без разрывов.</p>
+                        </div>
+                        <div class="flex-gap" style="align-items:center;">
+                            <span class="text-xs font-semibold" id="proxy-master-label">Включен</span>
+                            <label class="switch">
+                                <input type="checkbox" id="proxy-master-enable" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
                     </div>
                     <div class="card-body">
                         <div class="form-group mb-3">
@@ -273,11 +282,59 @@
             <!-- TAB: ZAPRET DPI -->
             <section id="tab-zapret" class="tab-pane">
                 <div class="card mb-4">
-                    <div class="card-header">
-                        <h3>Локальный обход DPI (Zapret NFQWS)</h3>
-                        <p class="muted text-xs">Позволяет открывать YouTube в 4K и чинить голосовые каналы Discord напрямую через вашего провайдера БЕЗ использования внешних VPN и VPS серверов!</p>
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>Локальный обход DPI (Zapret NFQWS Suite)</h3>
+                            <p class="muted text-xs">Разблокировка YouTube 4K 60fps и голосовых каналов Discord напрямую через вашего провайдера БЕЗ VPN и VPS серверов!</p>
+                        </div>
+                        <div class="flex-gap" style="align-items:center;">
+                            <span class="text-xs font-semibold" id="zapret-master-label">Включен</span>
+                            <label class="switch">
+                                <input type="checkbox" id="zapret-master-enable" checked>
+                                <span class="slider"></span>
+                            </label>
+                        </div>
                     </div>
                     <div class="card-body">
+                        <!-- Strategy Selector -->
+                        <div class="form-group mb-4">
+                            <label for="zapret-strategy" class="font-semibold">Стратегия десинхронизации пакетов против ТСПУ (DPI Evasion Strategy):</label>
+                            <select id="zapret-strategy" class="form-control mb-2">
+                                <option value="1">Стратегия 1: General Multi-Split (split2 + badseq + cutoff=d4)</option>
+                                <option value="2" selected>Стратегия 2: Fake TLS SNI (Russian TSPU Evasion v1 - Рекомендовано для YouTube)</option>
+                                <option value="3">Стратегия 3: Disorder + Badsum (Ростелеком, Мегафон, Дом.ру)</option>
+                                <option value="4">Стратегия 4: Discord WebRTC Voice + YouTube 4K (multisplit + any-proto)</option>
+                                <option value="5">Стратегия 5: Auto-TTL Desync (autottl=2, badseq, syndata)</option>
+                                <option value="6">Стратегия 6: Пользовательские параметры (Custom NFQWS Args)</option>
+                            </select>
+                            <p class="muted text-xs" id="zapret-strategy-desc">Оптимизированная десинхронизация TLS ClientHello с поддельным SNI для обхода блокировок Google Video и замедления YouTube.</p>
+                        </div>
+
+                        <!-- Custom Args Box (hidden unless strategy 6 selected) -->
+                        <div id="zapret-custom-box" class="form-group d-none mb-4">
+                            <label for="zapret-custom-args">Пользовательские аргументы nfqws:</label>
+                            <input type="text" id="zapret-custom-args" class="form-control" placeholder="--dpi-desync=fake,split2 --dpi-desync-fooling=badseq --dpi-desync-cutoff=d4">
+                        </div>
+
+                        <!-- Strategy Auto-Prober -->
+                        <div class="p-3 border rounded mb-4" style="background:#0b1120; border-color:#1e293b;">
+                            <div class="flex-between mb-2">
+                                <div>
+                                    <h4 style="margin:0; font-size:14px;">🧪 Авто-тестер стратегий (DPI Auto-Prober)</h4>
+                                    <span class="muted text-xs">Автоматически проверяет доступность YouTube и Discord через каждую стратегию и подбирает лучшую для вашего провайдера.</span>
+                                </div>
+                                <button class="btn btn-sm btn-outline" id="btn-zapret-probe">⚡ Запустить тест стратегий</button>
+                            </div>
+                            <div id="zapret-probe-results" class="d-none mt-3">
+                                <div class="text-xs mb-2 flex-between">
+                                    <span>Результаты тестирования:</span>
+                                    <span id="zapret-probe-rec" class="badge-pill" style="background:#065f46; color:#34d399;">Рекомендована: Стратегия 2</span>
+                                </div>
+                                <div id="zapret-probe-list" class="grid grid-2 text-xs" style="gap:8px;"></div>
+                            </div>
+                        </div>
+
+                        <!-- Feature toggles -->
                         <div class="toggle-card flex-between mb-3">
                             <div>
                                 <h4>Разблокировка YouTube (Full HD / 4K 60fps)</h4>
@@ -311,7 +368,10 @@
                             </label>
                         </div>
 
-                        <button class="btn btn-primary" id="btn-save-zapret">Сохранить настройки Zapret</button>
+                        <div class="flex-gap">
+                            <button class="btn btn-primary" id="btn-save-zapret">💾 Применить и сохранить настройки Zapret</button>
+                            <span id="zapret-save-status" class="text-xs align-self-center"></span>
+                        </div>
                     </div>
                 </div>
             </section>
@@ -677,6 +737,116 @@
                             </div>
                         </div>
                         <label class="text-xs"><input type="checkbox" id="guest-iso-lan" checked> Полностью изолировать гостей от домашней локальной сети (192.168.1.x) и веб-интерфейса</label>
+                    </div>
+                </div>
+
+                <!-- Professional Radio Settings (MT7620 / MT7610) -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>Профессиональные параметры радио (MediaTek Hardware)</h3>
+                        <p class="muted text-xs">Тонкая настройка PHY-уровня драйвера MediaTek, модуляции и энергопотребления RF-тракта.</p>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-2 mb-3">
+                            <div class="form-group">
+                                <label>Региональный домен (Country Code):</label>
+                                <select id="wifi-country" class="form-control">
+                                    <option value="RU" selected>RU - Россия (Каналы 1-13 + 5G без ограничений)</option>
+                                    <option value="US">US - США (Каналы 1-11, повышенная мощность)</option>
+                                    <option value="EU">EU - Европа (ETSI стандарт)</option>
+                                    <option value="CN">CN - Китай</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Тип преамбулы (Preamble Type):</label>
+                                <select id="wifi-preamble" class="form-control">
+                                    <option value="short" selected>Короткая преамбула (Short 802.11) - Макс. скорость</option>
+                                    <option value="long">Длинная преамбула (Long) - Для очень старых устройств</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div class="grid grid-3 text-xs">
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>TurboQAM (256-QAM в 2.4 GHz)</strong>
+                                    <p class="muted">Повышает скорость 2.4G с 300 до 400 Мбит/с для смартфонов и ПК</p>
+                                </div>
+                                <input type="checkbox" id="wifi-turbo-qam" checked>
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Green AP (Динамический RF-сон)</strong>
+                                    <p class="muted">Переводит радиочип в спящий режим при простое, снижая нагрев и энергопотребление</p>
+                                </div>
+                                <input type="checkbox" id="wifi-green-ap">
+                            </label>
+                            <label class="toggle-card flex-between">
+                                <div>
+                                    <strong>Airtime Fairness (Справедливый эфир)</strong>
+                                    <p class="muted">Защищает быстрые 802.11ac устройства от падения скорости из-за старых гаджетов</p>
+                                </div>
+                                <input type="checkbox" id="wifi-airtime-fairness" checked>
+                            </label>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Wi-Fi MAC Filter / ACL -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>Фильтр MAC-адресов Wi-Fi (ACL Контроль доступа)</h3>
+                            <p class="muted text-xs">Аппаратная фильтрация клиентов на уровне драйвера чипсета MediaTek.</p>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-2 mb-3">
+                            <div class="form-group">
+                                <label>Режим фильтрации MAC:</label>
+                                <select id="wifi-mac-mode" class="form-control">
+                                    <option value="0" selected>Отключен (Доступ разрешен всем)</option>
+                                    <option value="1">Белый список (Доступ разрешен ТОЛЬКО адресам из списка)</option>
+                                    <option value="2">Черный список (Блокировать адреса из списка)</option>
+                                </select>
+                            </div>
+                            <div class="form-group">
+                                <label>Добавить MAC-адрес клиента:</label>
+                                <div class="flex-gap">
+                                    <input type="text" id="wifi-mac-input" class="form-control" placeholder="AA:BB:CC:DD:EE:FF">
+                                    <button type="button" class="btn btn-sm btn-outline" id="btn-add-wifi-mac">➕ Добавить</button>
+                                </div>
+                            </div>
+                        </div>
+                        <div id="wifi-mac-list-box" class="p-2 border rounded" style="background:#090d16; min-height:60px;">
+                            <div id="wifi-mac-empty-msg" class="text-xs muted text-center py-2">Список MAC-адресов пуст</div>
+                            <div id="wifi-mac-tags" class="flex-gap" style="flex-wrap:wrap;"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Wi-Fi Schedule (Eco / Night Mode) -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>Расписание работы Wi-Fi (Эко / Ночной режим)</h3>
+                            <p class="muted text-xs">Автоматическое отключение радиопередатчиков на ночь: 0% нагрузки на CPU, экономия энергии и отсутствие радиоизлучения во время сна.</p>
+                        </div>
+                        <label class="switch">
+                            <input type="checkbox" id="wifi-sched-enable">
+                            <span class="slider"></span>
+                        </label>
+                    </div>
+                    <div class="card-body" id="wifi-sched-box">
+                        <div class="grid grid-2">
+                            <div class="form-group">
+                                <label>Время отключения Wi-Fi (Выключение радио):</label>
+                                <input type="time" id="wifi-sched-start" class="form-control" value="01:00">
+                            </div>
+                            <div class="form-group">
+                                <label>Время включения Wi-Fi (Включение радио):</label>
+                                <input type="time" id="wifi-sched-end" class="form-control" value="07:00">
+                            </div>
+                        </div>
                     </div>
                 </div>
 
@@ -1392,6 +1562,55 @@
                     </div>
                 </div>
 
+                <!-- SSH Dropbear Access -->
+                <div class="card mb-4">
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>Доступ по SSH (Dropbear CLI)</h3>
+                            <p class="muted text-xs">Защищенный терминальный доступ к Linux-окружению роутера FerrumOS.</p>
+                        </div>
+                        <span class="badge-status status-good">Порт 22 активен</span>
+                    </div>
+                    <div class="card-body">
+                        <div class="grid grid-3 mb-3 text-xs">
+                            <div><span class="muted">Хост:</span> <b>192.168.1.1:22</b></div>
+                            <div><span class="muted">Логин по умолчанию:</span> <b class="text-cyan">root</b></div>
+                            <div><span class="muted">Пароль по умолчанию:</span> <b class="text-cyan">root</b></div>
+                        </div>
+                        <p class="text-xs muted">Команда для подключения: <code>ssh root@192.168.1.1</code></p>
+                    </div>
+                </div>
+
+                <!-- Admin Password Change -->
+                <div class="card mb-4">
+                    <div class="card-header">
+                        <h3>Смена пароля администратора (Web & SSH)</h3>
+                        <p class="muted text-xs">Изменяет пароль суперпользователя root для веб-интерфейса и консоли SSH.</p>
+                    </div>
+                    <div class="card-body">
+                        <form id="form-change-password">
+                            <div class="grid grid-3 mb-3">
+                                <div class="form-group">
+                                    <label>Текущий пароль:</label>
+                                    <input type="password" id="pw-old" class="form-control" placeholder="Текущий пароль (root)" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Новый пароль:</label>
+                                    <input type="password" id="pw-new" class="form-control" placeholder="Минимум 3 символа" required>
+                                </div>
+                                <div class="form-group">
+                                    <label>Подтверждение нового пароля:</label>
+                                    <input type="password" id="pw-confirm" class="form-control" placeholder="Повторите пароль" required>
+                                </div>
+                            </div>
+                            <div class="flex-gap">
+                                <button type="submit" class="btn btn-primary" id="btn-change-pw">🔐 Обновить пароль</button>
+                                <span id="change-pw-status" class="text-xs align-self-center"></span>
+                            </div>
+                        </form>
+                    </div>
+                </div>
+
                 <div class="card">
                     <div class="card-header">
                         <h3>Управление системой</h3>
@@ -1399,10 +1618,39 @@
                     <div class="card-body flex-gap">
                         <button class="btn btn-outline" onclick="alert('Конфигурация выгружена в формате JSON')">Экспорт настроек (JSON)</button>
                         <button class="btn btn-warning" onclick="if(confirm('Перезагрузить роутер?')) fetch('/api/v1/system/reboot', {method:'POST'});">Перезагрузить</button>
+                        <button class="btn btn-danger" onclick="localStorage.removeItem('ferrum_auth_token'); location.reload();">Выйти из системы (Logout)</button>
                     </div>
                 </div>
             </section>
         </main>
+    </div>
+
+    <!-- Modal Login -->
+    <div id="login-modal" class="login-modal d-none">
+        <div class="card login-box">
+            <div class="card-header text-center" style="border-bottom:none; padding-bottom:0;">
+                <div class="brand-logo" style="justify-content:center; margin-bottom:12px;">
+                    <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="#38bdf8" stroke-width="2.5"><path d="M12 2L2 7l10 5 10-5-10-5zM2 17l10 5 10-5M2 12l10 5 10-5"/></svg>
+                    <span style="font-size:20px; font-weight:800; color:#fff;">Ferrum<span style="color:#38bdf8;">OS</span></span>
+                </div>
+                <h3>Авторизация</h3>
+                <p class="muted text-xs">Вход в панель управления (по умолчанию: <b>root / root</b>)</p>
+            </div>
+            <div class="card-body">
+                <form id="login-form">
+                    <div class="form-group mb-3">
+                        <label for="login-username">Имя пользователя:</label>
+                        <input type="text" id="login-username" class="form-control" value="root" required autocomplete="username">
+                    </div>
+                    <div class="form-group mb-3">
+                        <label for="login-password">Пароль:</label>
+                        <input type="password" id="login-password" class="form-control" placeholder="root" required autocomplete="current-password">
+                    </div>
+                    <div id="login-error" class="text-xs text-rose mb-3 d-none">Неверный логин или пароль. По умолчанию: root / root</div>
+                    <button type="submit" class="btn btn-primary" style="width:100%;" id="btn-login-submit">Войти</button>
+                </form>
+            </div>
+        </div>
     </div>
 
     <script src="/app.js"></script>

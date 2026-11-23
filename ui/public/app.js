@@ -1,5 +1,6 @@
 // FerrumOS Modern Client Application (Zero Dependencies, Ultra Fast)
 document.addEventListener("DOMContentLoaded", () => {
+    initAuthManager();
     initNavigation();
     initDashboard();
     initProxyManager();
@@ -9,6 +10,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initRadarManager();
     initNetworkManager();
     initToolsManager();
+    initSystemManager();
     startStatsPolling();
 });
 
@@ -183,10 +185,33 @@ function formatBytes(bytes) {
 function startStatsPolling() {
     fetchSystemStatus();
     fetchInterfaces();
-    setInterval(() => {
-        fetchSystemStatus();
-        fetchInterfaces();
-    }, 2000);
+
+    let pollInterval = null;
+    function schedulePoll() {
+        if (pollInterval) clearInterval(pollInterval);
+        if (document.hidden) return; // Completely STOP polling when tab is hidden (Zero CPU load)
+        pollInterval = setInterval(() => {
+            if (!document.hidden) {
+                fetchSystemStatus();
+                fetchInterfaces();
+            }
+        }, 4000); // 4000ms gentle interval saves 50% CPU when active
+    }
+
+    document.addEventListener("visibilitychange", () => {
+        if (!document.hidden) {
+            fetchSystemStatus();
+            fetchInterfaces();
+            schedulePoll();
+        } else {
+            if (pollInterval) {
+                clearInterval(pollInterval);
+                pollInterval = null;
+            }
+        }
+    });
+
+    schedulePoll();
 }
 
 function initDashboard() {
@@ -205,6 +230,31 @@ function initProxyManager() {
     const parsedCard = document.getElementById("proxy-parsed-card");
     const pingResult = document.getElementById("ping-result");
     const customRulesBox = document.getElementById("custom-rules-box");
+    const proxyMasterEnable = document.getElementById("proxy-master-enable");
+    const proxyMasterLabel = document.getElementById("proxy-master-label");
+
+    proxyMasterEnable?.addEventListener("change", async (e) => {
+        const enabled = e.target.checked;
+        if (proxyMasterLabel) proxyMasterLabel.textContent = enabled ? "Включен" : "Отключен";
+        try {
+            await fetch("/api/v1/proxy/toggle", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled })
+            });
+            const statusText = document.getElementById("proxy-status-text");
+            const proxyPill = document.getElementById("proxy-pill");
+            if (enabled) {
+                if (statusText) statusText.textContent = "Активен (Подключено)";
+                if (proxyPill) proxyPill.textContent = "Active";
+            } else {
+                if (statusText) statusText.textContent = "Отключен пользователем";
+                if (proxyPill) proxyPill.textContent = "Inactive";
+            }
+        } catch (err) {
+            console.warn("Proxy toggle error:", err);
+        }
+    });
 
     // Mode Radio selector
     document.querySelectorAll(".radio-card").forEach(card => {
@@ -333,12 +383,150 @@ function initProxyManager() {
 }
 
 function initZapretManager() {
+    const masterEnable = document.getElementById("zapret-master-enable");
+    const masterLabel = document.getElementById("zapret-master-label");
+    const strategySelect = document.getElementById("zapret-strategy");
+    const strategyDesc = document.getElementById("zapret-strategy-desc");
+    const customBox = document.getElementById("zapret-custom-box");
+    const customArgs = document.getElementById("zapret-custom-args");
+    const ytCheckbox = document.getElementById("zapret-youtube");
+    const dcCheckbox = document.getElementById("zapret-discord");
+    const genCheckbox = document.getElementById("zapret-general");
     const saveBtn = document.getElementById("btn-save-zapret");
-    saveBtn?.addEventListener("click", () => {
-        const yt = document.getElementById("zapret-youtube")?.checked;
-        const dc = document.getElementById("zapret-discord")?.checked;
-        const gen = document.getElementById("zapret-general")?.checked;
-        alert(`Настройки Zapret сохранены:\nYouTube 4K: ${yt ? "ВКЛ" : "ВЫКЛ"}\nDiscord: ${dc ? "ВКЛ" : "ВЫКЛ"}\nGeneral DPI: ${gen ? "ВКЛ" : "ВЫКЛ"}`);
+    const saveStatus = document.getElementById("zapret-save-status");
+    const probeBtn = document.getElementById("btn-zapret-probe");
+    const probeResults = document.getElementById("zapret-probe-results");
+    const probeRec = document.getElementById("zapret-probe-rec");
+    const probeList = document.getElementById("zapret-probe-list");
+
+    const descriptions = {
+        "1": "General Multi-Split (split2 + badseq + cutoff=d4) — базовая нарезка TCP пакетов для обхода фильтрации без поддельных заголовков.",
+        "2": "Fake TLS SNI (Russian TSPU Evasion v1) — подделка ClientHello с разрывом пакета на 2 части. Идеально для YouTube 4K на большинстве провайдеров РФ.",
+        "3": "Disorder + Badsum (Ростелеком, Мегафон, Дом.ру) — отправка фейкового пакета с некорректной чексуммой (ТСПУ перехватывает, сервер назначения отбрасывает).",
+        "4": "Discord WebRTC Voice + YouTube 4K (multisplit + any-proto) — многократная фрагментация + поддержка UDP протоколов голосовой связи Discord.",
+        "5": "Auto-TTL Desync (autottl=2, badseq, syndata) — автоматический подбор времени жизни пакета для обхода аппаратных фильтров ТСПУ.",
+        "6": "Пользовательские параметры (Custom NFQWS Args) — тонкая ручная настройка параметров десинхронизации."
+    };
+
+    function updateStrategyUI(val) {
+        if (strategyDesc && descriptions[val]) {
+            strategyDesc.textContent = descriptions[val];
+        }
+        if (customBox) {
+            if (val === "6") customBox.classList.remove("d-none");
+            else customBox.classList.add("d-none");
+        }
+    }
+
+    strategySelect?.addEventListener("change", (e) => {
+        updateStrategyUI(e.target.value);
+    });
+
+    masterEnable?.addEventListener("change", (e) => {
+        if (masterLabel) masterLabel.textContent = e.target.checked ? "Включен" : "Отключен";
+    });
+
+    // Fetch initial config
+    fetch("/api/v1/zapret/config")
+        .then(r => r.json())
+        .then(cfg => {
+            if (!cfg) return;
+            if (masterEnable) {
+                masterEnable.checked = !!cfg.enabled;
+                if (masterLabel) masterLabel.textContent = cfg.enabled ? "Включен" : "Отключен";
+            }
+            if (strategySelect) {
+                strategySelect.value = String(cfg.strategy || 2);
+                updateStrategyUI(strategySelect.value);
+            }
+            if (customArgs && cfg.custom_nfqws_args) {
+                customArgs.value = cfg.custom_nfqws_args;
+            }
+            if (ytCheckbox) ytCheckbox.checked = !!cfg.youtube_fix;
+            if (dcCheckbox) dcCheckbox.checked = !!cfg.discord_fix;
+            if (genCheckbox) genCheckbox.checked = !!cfg.general_dpi;
+        })
+        .catch(e => console.warn("Zapret config load failed:", e));
+
+    saveBtn?.addEventListener("click", async () => {
+        saveBtn.textContent = "Сохранение...";
+        const payload = {
+            enabled: masterEnable ? masterEnable.checked : true,
+            strategy: parseInt(strategySelect?.value || "2", 10),
+            youtube_fix: ytCheckbox ? ytCheckbox.checked : true,
+            discord_fix: dcCheckbox ? dcCheckbox.checked : true,
+            general_dpi: genCheckbox ? genCheckbox.checked : true,
+            custom_nfqws_args: customArgs?.value.trim() ? customArgs.value.trim() : null,
+        };
+
+        try {
+            const res = await fetch("/api/v1/zapret/config", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify(payload)
+            });
+            const data = await res.json();
+            if (saveStatus) {
+                saveStatus.textContent = data.success ? "✅ " + data.message : "❌ " + data.message;
+                saveStatus.className = "text-xs align-self-center " + (data.success ? "text-emerald" : "text-rose");
+            }
+        } catch (e) {
+            if (saveStatus) {
+                saveStatus.textContent = "Ошибка: " + e.message;
+                saveStatus.className = "text-xs align-self-center text-rose";
+            }
+        } finally {
+            saveBtn.textContent = "💾 Применить и сохранить настройки Zapret";
+        }
+    });
+
+    // Auto-probe
+    probeBtn?.addEventListener("click", async () => {
+        probeBtn.textContent = "⏳ Тестирование...";
+        probeBtn.disabled = true;
+        try {
+            const res = await fetch("/api/v1/zapret/probe", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" }
+            });
+            const data = await res.json();
+            if (data && data.results) {
+                if (probeResults) probeResults.classList.remove("d-none");
+                if (probeRec) {
+                    probeRec.textContent = `Рекомендована: Стратегия ${data.recommended_strategy}`;
+                }
+                if (probeList) {
+                    probeList.innerHTML = "";
+                    data.results.forEach(item => {
+                        const div = document.createElement("div");
+                        div.className = "p-2 rounded border";
+                        div.style.cssText = "background:#090d16; border-color:#1e293b; display:flex; justify-content:space-between; align-items:center;";
+                        const isGood = item.status === "success";
+                        div.innerHTML = `
+                            <div>
+                                <span style="font-weight:600; color:${isGood ? '#38bdf8' : '#94a3b8'};">Стратегия ${item.strategy_id}</span>
+                                <div class="muted" style="font-size:11px;">${item.strategy_name}</div>
+                            </div>
+                            <div style="text-align:right;">
+                                <span class="badge-pill" style="background:${isGood ? '#065f46' : '#7f1d1d'}; color:${isGood ? '#34d399' : '#f87171'};">
+                                    ${isGood ? `${item.latency_ms} ms` : 'Блокировка'}
+                                </span>
+                            </div>
+                        `;
+                        probeList.appendChild(div);
+                    });
+                }
+                if (strategySelect && data.recommended_strategy) {
+                    strategySelect.value = String(data.recommended_strategy);
+                    updateStrategyUI(String(data.recommended_strategy));
+                }
+            }
+        } catch (e) {
+            alert("Ошибка при тестировании стратегий: " + e.message);
+        } finally {
+            probeBtn.textContent = "⚡ Запустить тест стратегий";
+            probeBtn.disabled = false;
+        }
     });
 }
 
@@ -349,6 +537,59 @@ function initWifiManager() {
     const guestEnable = document.getElementById("guest-enable");
     const rssiSlider = document.getElementById("wifi-rssi");
     const rssiVal = document.getElementById("wifi-rssi-val");
+
+    let currentWifiAclList = [];
+
+    function renderWifiAclTags() {
+        const container = document.getElementById("wifi-mac-tags");
+        const emptyMsg = document.getElementById("wifi-mac-empty-msg");
+        if (!container) return;
+        container.innerHTML = "";
+        if (currentWifiAclList.length === 0) {
+            if (emptyMsg) emptyMsg.classList.remove("d-none");
+        } else {
+            if (emptyMsg) emptyMsg.classList.add("d-none");
+            currentWifiAclList.forEach((mac, idx) => {
+                const tag = document.createElement("span");
+                tag.className = "badge-pill";
+                tag.style.cssText = "display:inline-flex; align-items:center; gap:6px; padding:4px 8px; background:#161f30; border:1px solid #2d3b55; font-family:monospace;";
+                
+                const textSpan = document.createElement("span");
+                textSpan.textContent = mac;
+                tag.appendChild(textSpan);
+
+                const delBtn = document.createElement("span");
+                delBtn.textContent = "×";
+                delBtn.style.cssText = "cursor:pointer; color:#ef4444; font-weight:bold; font-size:14px; line-height:1;";
+                delBtn.title = "Удалить MAC";
+                delBtn.addEventListener("click", () => {
+                    currentWifiAclList.splice(idx, 1);
+                    renderWifiAclTags();
+                });
+                tag.appendChild(delBtn);
+
+                container.appendChild(tag);
+            });
+        }
+    }
+
+    const btnAddMac = document.getElementById("btn-add-wifi-mac");
+    const inputMac = document.getElementById("wifi-mac-input");
+    btnAddMac?.addEventListener("click", () => {
+        if (!inputMac) return;
+        const raw = inputMac.value.trim().toUpperCase();
+        const macRegex = /^([0-9A-F]{2}[:-]){5}([0-9A-F]{2})$/;
+        if (!macRegex.test(raw)) {
+            alert("Некорректный формат MAC-адреса! Пример: AA:BB:CC:DD:EE:FF");
+            return;
+        }
+        const normalized = raw.replace(/-/g, ":");
+        if (!currentWifiAclList.includes(normalized)) {
+            currentWifiAclList.push(normalized);
+            renderWifiAclTags();
+        }
+        inputMac.value = "";
+    });
 
     if (rssiSlider && rssiVal) {
         rssiSlider.addEventListener("input", (e) => {
@@ -406,6 +647,21 @@ function initWifiManager() {
             if (document.getElementById("guest-pass")) document.getElementById("guest-pass").value = cfg.guest_password || "";
             if (document.getElementById("guest-bw-limit")) document.getElementById("guest-bw-limit").value = cfg.guest_bandwidth_limit_mbps || 20;
             if (document.getElementById("guest-iso-lan")) document.getElementById("guest-iso-lan").checked = !!cfg.guest_isolate_lan;
+
+            // Professional RF & ACL
+            if (document.getElementById("wifi-country")) document.getElementById("wifi-country").value = cfg.country_code || "RU";
+            if (document.getElementById("wifi-preamble")) document.getElementById("wifi-preamble").value = cfg.preamble_short ? "short" : "long";
+            if (document.getElementById("wifi-turbo-qam")) document.getElementById("wifi-turbo-qam").checked = cfg.turbo_qam !== undefined ? !!cfg.turbo_qam : true;
+            if (document.getElementById("wifi-green-ap")) document.getElementById("wifi-green-ap").checked = !!cfg.green_ap;
+            if (document.getElementById("wifi-airtime-fairness")) document.getElementById("wifi-airtime-fairness").checked = cfg.airtime_fairness !== undefined ? !!cfg.airtime_fairness : true;
+            if (document.getElementById("wifi-mac-mode")) document.getElementById("wifi-mac-mode").value = cfg.mac_filter_mode !== undefined ? cfg.mac_filter_mode : 0;
+            currentWifiAclList = Array.isArray(cfg.mac_filter_list) ? [...cfg.mac_filter_list] : [];
+            renderWifiAclTags();
+
+            // Scheduler
+            if (document.getElementById("wifi-sched-enable")) document.getElementById("wifi-sched-enable").checked = !!cfg.wifi_schedule_enabled;
+            if (document.getElementById("wifi-sched-start")) document.getElementById("wifi-sched-start").value = cfg.wifi_schedule_start || "01:00";
+            if (document.getElementById("wifi-sched-end")) document.getElementById("wifi-sched-end").value = cfg.wifi_schedule_end || "07:00";
         })
         .catch(e => console.warn("Wi-Fi config load failed", e));
 
@@ -455,6 +711,17 @@ function initWifiManager() {
             guest_password: document.getElementById("guest-pass").value,
             guest_isolate_lan: document.getElementById("guest-iso-lan").checked,
             guest_bandwidth_limit_mbps: parseInt(document.getElementById("guest-bw-limit").value, 10) || 20,
+
+            preamble_short: document.getElementById("wifi-preamble") ? document.getElementById("wifi-preamble").value === "short" : true,
+            turbo_qam: document.getElementById("wifi-turbo-qam") ? document.getElementById("wifi-turbo-qam").checked : true,
+            green_ap: document.getElementById("wifi-green-ap") ? document.getElementById("wifi-green-ap").checked : false,
+            airtime_fairness: document.getElementById("wifi-airtime-fairness") ? document.getElementById("wifi-airtime-fairness").checked : true,
+            country_code: document.getElementById("wifi-country") ? document.getElementById("wifi-country").value : "RU",
+            mac_filter_mode: parseInt(document.getElementById("wifi-mac-mode")?.value, 10) || 0,
+            mac_filter_list: currentWifiAclList,
+            wifi_schedule_enabled: document.getElementById("wifi-sched-enable") ? document.getElementById("wifi-sched-enable").checked : false,
+            wifi_schedule_start: document.getElementById("wifi-sched-start")?.value || "01:00",
+            wifi_schedule_end: document.getElementById("wifi-sched-end")?.value || "07:00",
         };
 
         saveBtn.textContent = "Применение к радиомодулям...";
@@ -1535,6 +1802,94 @@ function initToolsManager() {
             diagOutput.textContent = "Ошибка выполнения: " + e.message;
         } finally {
             btnRunDiag.textContent = "▶ Запустить";
+        }
+    });
+}
+
+function initAuthManager() {
+    const modal = document.getElementById("login-modal");
+    const form = document.getElementById("login-form");
+    const errBox = document.getElementById("login-error");
+    const userInput = document.getElementById("login-username");
+    const passInput = document.getElementById("login-password");
+
+    const token = localStorage.getItem("ferrum_auth_token");
+    if (!token) {
+        modal?.classList.remove("d-none");
+    }
+
+    form?.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        errBox?.classList.add("d-none");
+        const username = userInput?.value.trim() || "";
+        const password = passInput?.value || "";
+
+        try {
+            const res = await fetch("/api/v1/auth/login", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ username, password })
+            });
+            const data = await res.json();
+            if (data.success && data.token) {
+                localStorage.setItem("ferrum_auth_token", data.token);
+                modal?.classList.add("d-none");
+            } else {
+                if (errBox) {
+                    errBox.textContent = data.message || "Неверный логин или пароль. По умолчанию: root / root";
+                    errBox.classList.remove("d-none");
+                }
+            }
+        } catch (err) {
+            if (errBox) {
+                errBox.textContent = "Ошибка связи с сервером: " + err.message;
+                errBox.classList.remove("d-none");
+            }
+        }
+    });
+}
+
+function initSystemManager() {
+    const formPw = document.getElementById("form-change-password");
+    const statusPw = document.getElementById("change-pw-status");
+    formPw?.addEventListener("submit", async (e) => {
+        e.preventDefault();
+        const old_password = document.getElementById("pw-old")?.value || "";
+        const new_password = document.getElementById("pw-new")?.value || "";
+        const confirm_password = document.getElementById("pw-confirm")?.value || "";
+
+        if (new_password !== confirm_password) {
+            if (statusPw) {
+                statusPw.textContent = "❌ Новые пароли не совпадают!";
+                statusPw.className = "text-xs text-rose align-self-center";
+            }
+            return;
+        }
+
+        try {
+            const res = await fetch("/api/v1/auth/change_password", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ old_password, new_password })
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (statusPw) {
+                    statusPw.textContent = "✅ " + data.message;
+                    statusPw.className = "text-xs text-emerald align-self-center";
+                }
+                formPw.reset();
+            } else {
+                if (statusPw) {
+                    statusPw.textContent = "❌ " + data.message;
+                    statusPw.className = "text-xs text-rose align-self-center";
+                }
+            }
+        } catch (err) {
+            if (statusPw) {
+                statusPw.textContent = "Ошибка: " + err.message;
+                statusPw.className = "text-xs text-rose align-self-center";
+            }
         }
     });
 }

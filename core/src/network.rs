@@ -126,6 +126,22 @@ pub struct WifiConfig {
     pub guest_password: String,
     pub guest_isolate_lan: bool,    // Block access to LAN devices
     pub guest_bandwidth_limit_mbps: u32,
+
+    // Professional RF & Tuning (MT7620 / MT7610)
+    pub preamble_short: bool,           // TxPreamble: true = Short (1), false = Long (0)
+    pub turbo_qam: bool,                // TurboQAM (256-QAM on 2.4GHz, up to 400 Mbps)
+    pub green_ap: bool,                 // GreenAP (dynamic RF power saving when idle)
+    pub airtime_fairness: bool,         // Airtime Fairness (VOW_Airtime_Fairness_En)
+    pub country_code: String,           // Country Code: "RU", "US", "CN", "EU"
+
+    // MAC Filter (ACL)
+    pub mac_filter_mode: u8,            // 0 = Disabled, 1 = Whitelist (Accept), 2 = Blacklist (Reject)
+    pub mac_filter_list: Vec<String>,   // List of MAC addresses ("AA:BB:CC:DD:EE:FF")
+
+    // Wi-Fi Schedule (Eco / Night Mode)
+    pub wifi_schedule_enabled: bool,
+    pub wifi_schedule_start: String,    // "01:00" (turn off)
+    pub wifi_schedule_end: String,      // "07:00" (turn on)
 }
 
 impl Default for WifiConfig {
@@ -175,6 +191,17 @@ impl Default for WifiConfig {
             guest_password: "GuestPassword".into(),
             guest_isolate_lan: true,
             guest_bandwidth_limit_mbps: 20,
+
+            preamble_short: true,
+            turbo_qam: true,
+            green_ap: false,
+            airtime_fairness: true,
+            country_code: "RU".into(),
+            mac_filter_mode: 0,
+            mac_filter_list: Vec::new(),
+            wifi_schedule_enabled: false,
+            wifi_schedule_start: "01:00".into(),
+            wifi_schedule_end: "07:00".into(),
         }
     }
 }
@@ -474,6 +501,30 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
     let wmm_val = if cfg.wmm_qos { 1 } else { 0 };
     let hide_2g = if cfg.wifi_2g_hidden { 1 } else { 0 };
 
+    let preamble_val = if cfg.preamble_short { 1 } else { 0 };
+    let turbo_qam_val = if cfg.turbo_qam { 1 } else { 0 };
+    let green_ap_val = if cfg.green_ap { 1 } else { 0 };
+    let atf_val = if cfg.airtime_fairness { 1 } else { 0 };
+    let safe_country = if cfg.country_code.trim().is_empty() {
+        "RU".to_string()
+    } else {
+        sanitize_clean_str(&cfg.country_code, 4).to_uppercase()
+    };
+
+    let acl_mode = match cfg.mac_filter_mode {
+        1 => 1, // Whitelist (Accept)
+        2 => 2, // Blacklist (Reject)
+        _ => 0, // Disabled
+    };
+    let acl_list_str = cfg.mac_filter_list
+        .iter()
+        .filter_map(|m| {
+            let clean = sanitize_clean_str(m, 17);
+            if clean.len() >= 11 { Some(clean) } else { None }
+        })
+        .collect::<Vec<String>>()
+        .join(";");
+
     let safe_ssid_2g = sanitize_clean_str(&cfg.wifi_2g_ssid, 32);
     let safe_pass_2g = sanitize_clean_str(&cfg.wifi_2g_password, 64);
     let safe_ssid_5g = sanitize_clean_str(&cfg.wifi_5g_ssid, 32);
@@ -486,7 +537,7 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         Default\n\
         CountryRegion=1\n\
         CountryRegionABand=7\n\
-        CountryCode=RU\n\
+        CountryCode={country}\n\
         BssidNum={bssid_num}\n\
         SSID1={ssid1}\n\
         SSID2={ssid2}\n\
@@ -503,7 +554,7 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         TxPower={tx_pwr}\n\
         BeaconPeriod={beacon}\n\
         DtimPeriod={dtim}\n\
-        TxPreamble=1\n\
+        TxPreamble={preamble}\n\
         RTSThreshold=2347\n\
         FragThreshold=2346\n\
         TxBurst={burst}\n\
@@ -533,7 +584,14 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         HT_RxStream=2\n\
         Dot11kEnable={dot11k}\n\
         Dot11vEnable={dot11v}\n\
-        GreenAP=0\n",
+        GreenAP={green_ap}\n\
+        G_BAND_256QAM={turbo_qam}\n\
+        VOW_Airtime_Fairness_En={atf}\n\
+        VOW_Airtime_Ctrl_En={atf}\n\
+        VOW_RX_En={atf}\n\
+        AccessPolicy0={acl_mode}\n\
+        AccessControlList0={acl_list}\n",
+        country = safe_country,
         bssid_num = if cfg.guest_enabled { 2 } else { 1 },
         ssid1 = safe_ssid_2g,
         ssid2 = if cfg.guest_enabled { &safe_guest_ssid } else { "" },
@@ -545,6 +603,7 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         tx_pwr = cfg.wifi_2g_tx_power,
         beacon = cfg.wifi_2g_beacon,
         dtim = cfg.wifi_2g_dtim,
+        preamble = preamble_val,
         burst = burst_val,
         agg = agg_val,
         wmm = wmm_val,
@@ -556,6 +615,11 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         gi = gi_2g,
         dot11k = if cfg.fast_roaming_80211k { 1 } else { 0 },
         dot11v = if cfg.fast_roaming_80211v { 1 } else { 0 },
+        green_ap = green_ap_val,
+        turbo_qam = turbo_qam_val,
+        atf = atf_val,
+        acl_mode = acl_mode,
+        acl_list = &acl_list_str,
     );
 
     let _ = fs::create_dir_all("/etc/Wireless/RT2860");
@@ -576,7 +640,7 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         Default\n\
         CountryRegion=1\n\
         CountryRegionABand=7\n\
-        CountryCode=RU\n\
+        CountryCode={country}\n\
         BssidNum={bssid_num}\n\
         SSID1={ssid1}\n\
         SSID2={ssid2}\n\
@@ -616,7 +680,11 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         Dot11kEnable={dot11k}\n\
         Dot11vEnable={dot11v}\n\
         IEEE80211H=0\n\
-        RDRegion=CE\n",
+        RDRegion=CE\n\
+        GreenAP={green_ap}\n\
+        AccessPolicy0={acl_mode}\n\
+        AccessControlList0={acl_list}\n",
+        country = safe_country,
         bssid_num = if cfg.guest_enabled { 2 } else { 1 },
         ssid1 = safe_ssid_5g,
         ssid2 = if cfg.guest_enabled { &safe_guest_ssid } else { "" },
@@ -637,10 +705,48 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         txbf = if cfg.wifi_5g_beamforming { 1 } else { 0 },
         dot11k = if cfg.fast_roaming_80211k { 1 } else { 0 },
         dot11v = if cfg.fast_roaming_80211v { 1 } else { 0 },
+        green_ap = green_ap_val,
+        acl_mode = acl_mode,
+        acl_list = &acl_list_str,
     );
 
     let _ = fs::create_dir_all("/etc/Wireless/iNIC");
     let _ = fs::write("/etc/Wireless/iNIC/iNIC_ap.dat", dat_5g);
+
+    // 3. Wi-Fi Eco & Night Schedule (Crontab management)
+    if cfg.wifi_schedule_enabled {
+        let parse_time = |t: &str| -> (u32, u32) {
+            let parts: Vec<&str> = t.split(':').collect();
+            if parts.len() == 2 {
+                let h = parts[0].parse::<u32>().unwrap_or(1);
+                let m = parts[1].parse::<u32>().unwrap_or(0);
+                (h % 24, m % 60)
+            } else {
+                (1, 0)
+            }
+        };
+        let (start_h, start_m) = parse_time(&cfg.wifi_schedule_start);
+        let (end_h, end_m) = parse_time(&cfg.wifi_schedule_end);
+
+        let cron_entry = format!(
+            "# FerrumOS Wi-Fi Eco Scheduler\n\
+            {} {} * * * ifconfig ra0 down; ifconfig rai0 down\n\
+            {} {} * * * ifconfig ra0 up; ifconfig rai0 up\n",
+            start_m, start_h, end_m, end_h
+        );
+        let _ = fs::create_dir_all("/var/spool/cron/crontabs");
+        let _ = fs::write("/var/spool/cron/crontabs/admin", &cron_entry);
+        let _ = fs::create_dir_all("/etc/storage/cron/crontabs");
+        let _ = fs::write("/etc/storage/cron/crontabs/admin", &cron_entry);
+    } else {
+        if let Ok(content) = fs::read_to_string("/var/spool/cron/crontabs/admin") {
+            let filtered: Vec<&str> = content
+                .lines()
+                .filter(|l| !l.contains("FerrumOS Wi-Fi Eco") && !l.contains("ifconfig ra0"))
+                .collect();
+            let _ = fs::write("/var/spool/cron/crontabs/admin", filtered.join("\n"));
+        }
+    }
 
     // 3. Restart Radio Interfaces if on device
     if cfg.wifi_2g_enabled {
@@ -1531,5 +1637,22 @@ mod tests {
         let res = run_diagnostic(&req);
         assert!(!res.success);
         assert!(res.output.contains("недопустимый"));
+    }
+
+    #[test]
+    fn test_wifi_advanced_defaults_and_acl() {
+        let mut cfg = WifiConfig::default();
+        assert!(cfg.preamble_short);
+        assert!(cfg.turbo_qam);
+        assert!(!cfg.green_ap);
+        assert!(cfg.airtime_fairness);
+        assert_eq!(cfg.country_code, "RU");
+        assert_eq!(cfg.mac_filter_mode, 0);
+
+        cfg.mac_filter_mode = 1;
+        cfg.mac_filter_list.push("AA:BB:CC:DD:EE:FF".into());
+        cfg.mac_filter_list.push("11:22:33:44:55:66".into());
+
+        assert!(apply_wifi_config(&cfg).is_ok());
     }
 }

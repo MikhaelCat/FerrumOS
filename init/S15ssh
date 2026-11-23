@@ -1,0 +1,50 @@
+#!/bin/sh
+# FerrumOS SSH Dropbear Service
+# Default credentials: root / root (port 22)
+
+STORAGE_DIR="/etc/storage/dropbear"
+RSA_KEY="$STORAGE_DIR/rsa_host_key"
+
+start_sshd() {
+    echo "[FerrumOS] Starting Dropbear SSH service on port 22..."
+    mkdir -p "$STORAGE_DIR" /var/empty
+
+    # Ensure root has password "root" if shadow doesn't exist
+    if [ ! -f /etc/shadow ] || ! grep -q "root:" /etc/shadow; then
+        echo "root:\$1\$FerrumOS\$XFku7xAtmH/m6ShlEVSvs.:19000:0:99999:7:::" > /etc/shadow
+        chmod 600 /etc/shadow
+    fi
+    if [ ! -f /etc/passwd ] || ! grep -q "root:" /etc/passwd; then
+        echo "root:x:0:0:root:/home/root:/bin/sh" > /etc/passwd
+        chmod 644 /etc/passwd
+    fi
+
+    # Generate host key if not present
+    if [ ! -f "$RSA_KEY" ]; then
+        echo "[FerrumOS] Generating SSH RSA host key..."
+        dropbearkey -t rsa -f "$RSA_KEY" 2>/dev/null || /usr/bin/dropbearkey -t rsa -f "$RSA_KEY" 2>/dev/null || true
+        chmod 600 "$RSA_KEY" 2>/dev/null || true
+    fi
+
+    # Start Dropbear
+    if ! pidof dropbear >/dev/null 2>&1; then
+        if [ -f "$RSA_KEY" ]; then
+            /usr/sbin/dropbear -r "$RSA_KEY" -p 22
+        else
+            /usr/sbin/dropbear -p 22
+        fi
+        echo "[FerrumOS] Dropbear SSH running on port 22 (login: root / pass: root)."
+    fi
+}
+
+stop_sshd() {
+    echo "[FerrumOS] Stopping Dropbear SSH..."
+    killall dropbear 2>/dev/null || true
+}
+
+case "$1" in
+    start) start_sshd ;;
+    stop) stop_sshd ;;
+    restart) stop_sshd; sleep 1; start_sshd ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

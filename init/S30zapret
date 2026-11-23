@@ -20,16 +20,15 @@ start_zapret() {
     # Block QUIC/HTTP3 to force YouTube to use HTTP/2 with NFQWS desync
     iptables -t mangle -A POSTROUTING -p udp --dport 443 -j DROP
 
-    # Launch nfqws with multi-split, badseq, syndata, and Discord UDP stun desync
-    $NFQWS \
-        --qnum=$QNUM \
-        --dpi-desync=split2 \
-        --dpi-desync-split-pos=1 \
-        --dpi-desync-fooling=badseq \
-        --dpi-desync-cutoff=d4 \
-        --dpi-desync-repeats=2 \
-        --dpi-desync-any-protocol \
-        --daemon
+    # Launch nfqws with selected strategy preset (or custom args)
+    ARGS="--qnum=$QNUM --dpi-desync=split2 --dpi-desync-split-pos=1 --dpi-desync-fooling=badseq --dpi-desync-cutoff=d4 --dpi-desync-repeats=2 --dpi-desync-any-protocol"
+    if [ -f /etc/zapret/nfqws.args ]; then
+        ARGS="$(cat /etc/zapret/nfqws.args)"
+    elif [ -f /etc/storage/zapret/nfqws.args ]; then
+        ARGS="$(cat /etc/storage/zapret/nfqws.args)"
+    fi
+
+    $NFQWS $ARGS --daemon
 
     echo "[FerrumOS] Zapret active: YouTube 4K and Discord voice unblocked."
 }

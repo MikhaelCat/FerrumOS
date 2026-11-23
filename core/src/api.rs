@@ -14,7 +14,7 @@ use crate::network::{
 use crate::parser::{parse_proxy_uri, ProxyConfig};
 use crate::singbox::{generate_singbox_config, RoutingMode, SingBoxConfig};
 use crate::system::get_system_status;
-use crate::zapret::{get_zapret_status, ZapretConfig};
+use crate::zapret::{apply_zapret_config, get_zapret_status, probe_zapret_strategies, ZapretConfig};
 use serde::{Deserialize, Serialize};
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
@@ -23,9 +23,11 @@ use tiny_http::{Header, Method, Request, Response, StatusCode};
 #[derive(Clone)]
 pub struct AppState {
     pub proxy_config: Arc<Mutex<Option<ProxyConfig>>>,
+    pub proxy_enabled: Arc<Mutex<bool>>,
     pub routing_mode: Arc<Mutex<RoutingMode>>,
-    #[allow(dead_code)]
     pub zapret_config: Arc<Mutex<ZapretConfig>>,
+    pub auth_password: Arc<Mutex<String>>,
+    pub auth_tokens: Arc<Mutex<Vec<String>>>,
     pub wifi_config: Arc<Mutex<WifiConfig>>,
     pub dns_config: Arc<Mutex<DnsAdvancedConfig>>,
     pub lan_config: Arc<Mutex<LanDhcpConfig>>,
@@ -96,10 +98,24 @@ impl AppState {
             .and_then(|s| serde_json::from_str::<DdnsConfig>(&s).ok())
             .unwrap_or_default();
 
+        let zapret_cfg = std::fs::read_to_string("/etc/storage/zapret_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<ZapretConfig>(&s).ok())
+            .unwrap_or_default();
+
+        let admin_pw = std::fs::read_to_string("/etc/storage/admin_password.txt")
+            .ok()
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .unwrap_or_else(|| "root".into());
+
         AppState {
             proxy_config: Arc::new(Mutex::new(None)),
+            proxy_enabled: Arc::new(Mutex::new(true)),
             routing_mode: Arc::new(Mutex::new(RoutingMode::SmartRu)),
-            zapret_config: Arc::new(Mutex::new(ZapretConfig::default())),
+            zapret_config: Arc::new(Mutex::new(zapret_cfg)),
+            auth_password: Arc::new(Mutex::new(admin_pw)),
+            auth_tokens: Arc::new(Mutex::new(Vec::new())),
             wifi_config: Arc::new(Mutex::new(wifi_cfg)),
             dns_config: Arc::new(Mutex::new(dns_cfg)),
             lan_config: Arc::new(Mutex::new(lan_cfg)),
@@ -113,6 +129,30 @@ impl AppState {
             ddns_config: Arc::new(Mutex::new(ddns_cfg)),
         }
     }
+}
+
+#[derive(Deserialize)]
+struct LoginReq {
+    username: String,
+    password: String,
+}
+
+#[derive(Serialize)]
+struct LoginResp {
+    success: bool,
+    token: Option<String>,
+    message: String,
+}
+
+#[derive(Deserialize)]
+struct ChangePasswordReq {
+    old_password: String,
+    new_password: String,
+}
+
+#[derive(Deserialize)]
+struct ProxyToggleReq {
+    enabled: bool,
 }
 
 #[derive(Deserialize)]
@@ -147,6 +187,12 @@ struct ApplyProxyReq {
     custom_domains: Vec<String>,
     #[serde(default)]
     custom_ips: Vec<String>,
+    #[serde(default = "default_true")]
+    enabled: bool,
+}
+
+fn default_true() -> bool {
+    true
 }
 
 #[derive(Serialize)]
@@ -158,6 +204,7 @@ struct GenericResp {
 #[derive(Serialize)]
 struct ProxyStatusResp {
     active: bool,
+    enabled: bool,
     mode: RoutingMode,
     current_proxy: Option<ProxyConfig>,
 }
@@ -240,17 +287,21 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             let _ = request.respond(resp);
         }
         (Method::Get, "/app.js") => {
+            let cache_header = Header::from_bytes(&b"Cache-Control"[..], &b"public, max-age=604800, immutable"[..]).unwrap();
             let resp = Response::from_string(APP_JS)
                 .with_header(content_type_js)
                 .with_header(sec_xfo)
-                .with_header(sec_nosniff);
+                .with_header(sec_nosniff)
+                .with_header(cache_header);
             let _ = request.respond(resp);
         }
         (Method::Get, "/app.css") => {
+            let cache_header = Header::from_bytes(&b"Cache-Control"[..], &b"public, max-age=604800, immutable"[..]).unwrap();
             let resp = Response::from_string(APP_CSS)
                 .with_header(content_type_css)
                 .with_header(sec_xfo)
-                .with_header(sec_nosniff);
+                .with_header(sec_nosniff)
+                .with_header(cache_header);
             let _ = request.respond(resp);
         }
 
@@ -706,6 +757,87 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             }
         }
 
+        // REST API: Auth (root / root default)
+        (Method::Post, "/api/v1/auth/login") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(req) = serde_json::from_str::<LoginReq>(&body) {
+                let current_pw = state.auth_password.lock().unwrap().clone();
+                if (req.username == "root" || req.username == "admin") && req.password == current_pw {
+                    let token = format!("ferrum_tok_{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0));
+                    state.auth_tokens.lock().unwrap().push(token.clone());
+                    let resp = LoginResp {
+                        success: true,
+                        token: Some(token),
+                        message: "Авторизация успешна".into(),
+                    };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                } else {
+                    let resp = LoginResp {
+                        success: false,
+                        token: None,
+                        message: "Неверный логин или пароль. По умолчанию: root / root".into(),
+                    };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                }
+            } else {
+                let resp = GenericResp { success: false, message: "Invalid JSON".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+        (Method::Get, "/api/v1/auth/check") => {
+            let resp = serde_json::json!({ "authenticated": true, "user": "root" });
+            respond_json(request, &resp, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/auth/change_password") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(req) = serde_json::from_str::<ChangePasswordReq>(&body) {
+                let mut current_pw = state.auth_password.lock().unwrap();
+                if req.old_password == *current_pw {
+                    if req.new_password.len() < 3 {
+                        let resp = GenericResp { success: false, message: "Пароль должен быть не короче 3 символов".into() };
+                        respond_json(request, &resp, cors_header, content_type_json);
+                    } else {
+                        *current_pw = req.new_password.clone();
+                        let _ = std::fs::create_dir_all("/etc/storage");
+                        let _ = std::fs::write("/etc/storage/admin_password.txt", &req.new_password);
+                        let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                        let resp = GenericResp { success: true, message: "Пароль администратора успешно изменен и сохранен в Flash".into() };
+                        respond_json(request, &resp, cors_header, content_type_json);
+                    }
+                } else {
+                    let resp = GenericResp { success: false, message: "Старый пароль указан неверно".into() };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                }
+            } else {
+                let resp = GenericResp { success: false, message: "Invalid JSON".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
+        // REST API: Proxy toggle
+        (Method::Post, "/api/v1/proxy/toggle") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(req) = serde_json::from_str::<ProxyToggleReq>(&body) {
+                *state.proxy_enabled.lock().unwrap() = req.enabled;
+                if req.enabled {
+                    let _ = std::process::Command::new("/etc/init.d/S40singbox").arg("restart").output();
+                } else {
+                    let _ = std::process::Command::new("/etc/init.d/S40singbox").arg("stop").output();
+                }
+                let resp = GenericResp {
+                    success: true,
+                    message: if req.enabled { "VPN туннель включен".into() } else { "VPN туннель отключен".into() },
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp { success: false, message: "Invalid JSON".into() };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+
         // REST API: Proxy apply (commit & apply configuration)
         (Method::Post, "/api/v1/proxy/apply") => {
             let mut body = String::new();
@@ -720,6 +852,7 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                             Ok(cfg) => {
                                 // Save active state
                                 *state.proxy_config.lock().unwrap() = Some(parsed);
+                                *state.proxy_enabled.lock().unwrap() = data.enabled;
                                 *state.routing_mode.lock().unwrap() = data.mode;
 
                                 // Save config to /etc/sing-box/config.json in production
@@ -732,8 +865,12 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                                 // Commit to MTD Flash partition (mtd3 RW config) so settings survive reboot
                                 let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
 
-                                // Restart Sing-Box service
-                                let _ = std::process::Command::new("/etc/init.d/S40singbox").arg("restart").output();
+                                // Restart Sing-Box service if enabled
+                                if data.enabled {
+                                    let _ = std::process::Command::new("/etc/init.d/S40singbox").arg("restart").output();
+                                } else {
+                                    let _ = std::process::Command::new("/etc/init.d/S40singbox").arg("stop").output();
+                                }
 
                                 let resp = GenericResp {
                                     success: true,
@@ -772,8 +909,10 @@ pub fn handle_request(mut request: Request, state: &AppState) {
         (Method::Get, "/api/v1/proxy/status") => {
             let proxy = state.proxy_config.lock().unwrap().clone();
             let mode = state.routing_mode.lock().unwrap().clone();
+            let enabled = *state.proxy_enabled.lock().unwrap();
             let resp = ProxyStatusResp {
-                active: proxy.is_some(),
+                active: proxy.is_some() && enabled,
+                enabled,
                 mode,
                 current_proxy: proxy,
             };
@@ -824,10 +963,45 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             }
         }
 
-        // REST API: Zapret status
+        // REST API: Zapret status, config & auto-probe
         (Method::Get, "/api/v1/zapret/status") => {
-            let status = get_zapret_status();
+            let current_strategy = state.zapret_config.lock().unwrap().strategy;
+            let status = get_zapret_status(current_strategy);
             respond_json(request, &status, cors_header, content_type_json);
+        }
+        (Method::Get, "/api/v1/zapret/config") => {
+            let cfg = state.zapret_config.lock().unwrap().clone();
+            respond_json(request, &cfg, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/zapret/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<ZapretConfig>(&body) {
+                *state.zapret_config.lock().unwrap() = new_cfg.clone();
+                let _ = apply_zapret_config(&new_cfg);
+
+                if let Ok(json_str) = serde_json::to_string_pretty(&new_cfg) {
+                    let _ = std::fs::create_dir_all("/etc/storage");
+                    let _ = std::fs::write("/etc/storage/zapret_config.json", json_str);
+                    let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                }
+
+                let resp = GenericResp {
+                    success: true,
+                    message: "Настройки и стратегия Zapret успешно применены и сохранены в Flash".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Invalid Zapret JSON payload".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
+        (Method::Post, "/api/v1/zapret/probe") => {
+            let probe_res = probe_zapret_strategies();
+            respond_json(request, &probe_res, cors_header, content_type_json);
         }
 
         // Fallback 404
@@ -858,11 +1032,18 @@ mod tests {
 
     #[test]
     fn test_wifi_config_roundtrip() {
-        let default_cfg = WifiConfig::default();
+        let mut default_cfg = WifiConfig::default();
+        default_cfg.mac_filter_mode = 1;
+        default_cfg.mac_filter_list.push("00:11:22:33:44:55".into());
         let json = serde_json::to_string(&default_cfg).expect("Serialization failed");
         let parsed: WifiConfig = serde_json::from_str(&json).expect("Deserialization failed");
         assert_eq!(parsed.wifi_2g_ssid, default_cfg.wifi_2g_ssid);
         assert_eq!(parsed.wifi_5g_bandwidth, 80);
+        assert!(parsed.turbo_qam);
+        assert!(parsed.preamble_short);
+        assert_eq!(parsed.country_code, "RU");
+        assert_eq!(parsed.mac_filter_mode, 1);
+        assert_eq!(parsed.mac_filter_list.len(), 1);
     }
 
     #[test]
@@ -945,5 +1126,24 @@ mod tests {
         let malformed = "{\"enabled\": \"not_a_boolean\"}";
         let res = serde_json::from_str::<FirewallConfig>(malformed);
         assert!(res.is_err(), "Malformed JSON should return Err, never panic");
+    }
+
+    #[test]
+    fn test_zapret_config_roundtrip() {
+        use crate::zapret::ZapretConfig;
+        let mut cfg = ZapretConfig::default();
+        cfg.strategy = 3;
+        cfg.custom_nfqws_args = Some("--dpi-desync-ttl=4".into());
+        let json = serde_json::to_string(&cfg).expect("Serialization failed");
+        let parsed: ZapretConfig = serde_json::from_str(&json).expect("Deserialization failed");
+        assert_eq!(parsed.strategy, 3);
+        assert_eq!(parsed.custom_nfqws_args.as_deref(), Some("--dpi-desync-ttl=4"));
+    }
+
+    #[test]
+    fn test_auth_default_credentials() {
+        let state = crate::AppState::new();
+        assert_eq!(*state.auth_password.lock().unwrap(), "root");
+        assert!(*state.proxy_enabled.lock().unwrap());
     }
 }
