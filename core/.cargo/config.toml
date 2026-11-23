@@ -1,0 +1,7 @@
+[target.mipsel-unknown-linux-uclibc]
+linker = "/home/mihail/padavan_build/padavan-ng/toolchain/out/bin/mipsel-linux-uclibc-gcc"
+rustflags = ["-C", "target-feature=-fp64", "-C", "relocation-model=static"]
+
+[target.mipsel-unknown-linux-musl]
+linker = "/home/mihail/padavan_build/padavan-ng/toolchain/out/bin/mipsel-linux-uclibc-gcc"
+rustflags = ["-C", "target-feature=-fp64", "-C", "relocation-model=static"]

@@ -1,0 +1,20 @@
+[package]
+name = "ferrum-core"
+version = "0.1.0"
+edition = "2021"
+authors = ["MikhaelCat"]
+description = "FerrumOS lightweight core daemon and HTTP API for MT7620 router"
+
+[dependencies]
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+url = "2.5"
+base64 = "0.22"
+tiny_http = "0.12"
+
+[profile.release]
+opt-level = "z"        # Optimize for size
+lto = true             # Enable link-time optimization
+codegen-units = 1      # Reduce code size
+panic = "abort"        # Strip panic unwinding
+strip = true           # Automatically strip symbols

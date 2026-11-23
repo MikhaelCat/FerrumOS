@@ -1,0 +1,47 @@
+#!/bin/sh
+# FerrumOS Sing-Box Runner & Policy Routing Service
+# Handles VLESS Reality & Hysteria 2 with auto-routing via TUN interface tun0
+
+CONFIG="/etc/sing-box/config.json"
+BIN="/usr/bin/sing-box"
+PIDFILE="/var/run/sing-box.pid"
+
+start_singbox() {
+    if [ ! -f "$CONFIG" ]; then
+        echo "[FerrumOS] No sing-box config found at $CONFIG. Skipping."
+        exit 0
+    fi
+
+    echo "[FerrumOS] Starting Sing-Box tunnel daemon..."
+
+    # Ensure tun kernel module is loaded
+    modprobe tun 2>/dev/null || true
+
+    # Policy Routing setup:
+    # Table 100 for tun0 default route
+    ip route flush table 100 2>/dev/null || true
+    ip rule del fwmark 0x100/0x100 table 100 2>/dev/null || true
+
+    # Run sing-box in background
+    $BIN run -c "$CONFIG" > /var/log/sing-box.log 2>&1 &
+    echo $! > "$PIDFILE"
+
+    echo "[FerrumOS] Sing-box running with PID $(cat "$PIDFILE")."
+}
+
+stop_singbox() {
+    echo "[FerrumOS] Stopping Sing-box..."
+    if [ -f "$PIDFILE" ]; then
+        kill "$(cat "$PIDFILE")" 2>/dev/null || true
+        rm -f "$PIDFILE"
+    fi
+    killall sing-box 2>/dev/null || true
+    ip route flush table 100 2>/dev/null || true
+}
+
+case "$1" in
+    start) start_singbox ;;
+    stop) stop_singbox ;;
+    restart) stop_singbox; sleep 1; start_singbox ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

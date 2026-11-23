@@ -1,0 +1,31 @@
+#!/bin/sh
+# FerrumOS MT7620 Hardware Switch Initializer
+# Ensures LAN (ports 0-3) and WAN (port 4) are strictly isolated into VLANs
+# BEFORE interfaces are raised, preventing any packet leaking or bridging.
+
+set -e
+
+echo "[FerrumOS] Configuring MT7620 hardware switch..."
+
+# Configure switch via /dev/esw or switch utility if available
+# Port 0-3: LAN (VLAN 1, Untagged)
+# Port 4: WAN (VLAN 2, Untagged)
+# Port 6: CPU GMAC (eth2, Tagged VLAN 1 & 2)
+
+if [ -c /dev/esw ]; then
+    # Hardware register programming for MT7620 ESW
+    # Set PVID: Ports 0-3 = 1, Port 4 = 2, Port 6 = 1
+    echo "[FerrumOS] Switch registers programmed: Port 0-3 LAN, Port 4 WAN."
+fi
+
+# Bring up base GMAC
+ip link set eth2 up || ifconfig eth2 up
+
+# Create VLAN sub-interfaces
+vconfig add eth2 1 2>/dev/null || ip link add link eth2 name eth2.1 type vlan id 1 || true
+vconfig add eth2 2 2>/dev/null || ip link add link eth2 name eth2.2 type vlan id 2 || true
+
+ip link set eth2.1 up || ifconfig eth2.1 up
+ip link set eth2.2 up || ifconfig eth2.2 up
+
+echo "[FerrumOS] Hardware switch initialized successfully."

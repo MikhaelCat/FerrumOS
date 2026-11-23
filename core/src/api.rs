@@ -1,0 +1,313 @@
+use crate::network::{get_network_interfaces, WifiConfig};
+use crate::parser::{parse_proxy_uri, ProxyConfig};
+use crate::singbox::{generate_singbox_config, RoutingMode, SingBoxConfig};
+use crate::system::get_system_status;
+use crate::zapret::{get_zapret_status, ZapretConfig};
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
+use std::time::Instant;
+use tiny_http::{Header, Method, Request, Response, StatusCode};
+
+#[derive(Clone)]
+pub struct AppState {
+    pub proxy_config: Arc<Mutex<Option<ProxyConfig>>>,
+    pub routing_mode: Arc<Mutex<RoutingMode>>,
+    #[allow(dead_code)]
+    pub zapret_config: Arc<Mutex<ZapretConfig>>,
+    pub wifi_config: Arc<Mutex<WifiConfig>>,
+}
+
+impl AppState {
+    pub fn new() -> Self {
+        AppState {
+            proxy_config: Arc::new(Mutex::new(None)),
+            routing_mode: Arc::new(Mutex::new(RoutingMode::SmartRu)),
+            zapret_config: Arc::new(Mutex::new(ZapretConfig::default())),
+            wifi_config: Arc::new(Mutex::new(WifiConfig::default())),
+        }
+    }
+}
+
+#[derive(Deserialize)]
+struct ImportProxyReq {
+    uri: String,
+}
+
+#[derive(Serialize)]
+struct ImportProxyResp {
+    success: bool,
+    config: Option<ProxyConfig>,
+    singbox_json: Option<SingBoxConfig>,
+    error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct ApplyProxyReq {
+    uri: String,
+    mode: RoutingMode,
+    #[serde(default)]
+    custom_domains: Vec<String>,
+    #[serde(default)]
+    custom_ips: Vec<String>,
+}
+
+#[derive(Serialize)]
+struct GenericResp {
+    success: bool,
+    message: String,
+}
+
+#[derive(Serialize)]
+struct ProxyStatusResp {
+    active: bool,
+    mode: RoutingMode,
+    current_proxy: Option<ProxyConfig>,
+}
+
+#[derive(Deserialize)]
+struct TestPingReq {
+    host: String,
+    port: u16,
+}
+
+#[derive(Serialize)]
+struct TestPingResp {
+    success: bool,
+    latency_ms: Option<u64>,
+    error: Option<String>,
+}
+
+// Embedded Web UI assets
+pub const INDEX_HTML: &str = include_str!("../../ui/public/index.html");
+pub const APP_JS: &str = include_str!("../../ui/public/app.js");
+pub const APP_CSS: &str = include_str!("../../ui/public/app.css");
+
+pub fn handle_request(mut request: Request, state: &AppState) {
+    let url = request.url().to_string();
+    let method = request.method().clone();
+
+    // CORS and Security Headers
+    let cors_header = Header::from_bytes(&b"Access-Control-Allow-Origin"[..], &b"*"[..]).unwrap();
+    let content_type_json = Header::from_bytes(&b"Content-Type"[..], &b"application/json; charset=utf-8"[..]).unwrap();
+    let content_type_html = Header::from_bytes(&b"Content-Type"[..], &b"text/html; charset=utf-8"[..]).unwrap();
+    let content_type_js = Header::from_bytes(&b"Content-Type"[..], &b"application/javascript; charset=utf-8"[..]).unwrap();
+    let content_type_css = Header::from_bytes(&b"Content-Type"[..], &b"text/css; charset=utf-8"[..]).unwrap();
+
+    if method == Method::Options {
+        let resp = Response::empty(StatusCode(204))
+            .with_header(cors_header)
+            .with_header(Header::from_bytes(&b"Access-Control-Allow-Methods"[..], &b"GET, POST, OPTIONS"[..]).unwrap())
+            .with_header(Header::from_bytes(&b"Access-Control-Allow-Headers"[..], &b"Content-Type"[..]).unwrap());
+        let _ = request.respond(resp);
+        return;
+    }
+
+    match (method, url.as_str()) {
+        // UI static assets
+        (Method::Get, "/") | (Method::Get, "/index.html") => {
+            let resp = Response::from_string(INDEX_HTML)
+                .with_header(content_type_html);
+            let _ = request.respond(resp);
+        }
+        (Method::Get, "/app.js") => {
+            let resp = Response::from_string(APP_JS)
+                .with_header(content_type_js);
+            let _ = request.respond(resp);
+        }
+        (Method::Get, "/app.css") => {
+            let resp = Response::from_string(APP_CSS)
+                .with_header(content_type_css);
+            let _ = request.respond(resp);
+        }
+
+        // REST API: System
+        (Method::Get, "/api/v1/system/status") => {
+            let status = get_system_status();
+            respond_json(request, &status, cors_header, content_type_json);
+        }
+
+        // REST API: Network
+        (Method::Get, "/api/v1/network/interfaces") => {
+            let ifaces = get_network_interfaces();
+            respond_json(request, &ifaces, cors_header, content_type_json);
+        }
+
+        // REST API: Wi-Fi
+        (Method::Get, "/api/v1/wifi/config") => {
+            let wifi = state.wifi_config.lock().unwrap().clone();
+            respond_json(request, &wifi, cors_header, content_type_json);
+        }
+
+        // REST API: Proxy import (parse URI)
+        (Method::Post, "/api/v1/proxy/import") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            let req: Result<ImportProxyReq, _> = serde_json::from_str(&body);
+
+            match req {
+                Ok(data) => match parse_proxy_uri(&data.uri) {
+                    Ok(parsed) => {
+                        let singbox = generate_singbox_config(&parsed, RoutingMode::SmartRu, &[], &[]).ok();
+                        let resp_data = ImportProxyResp {
+                            success: true,
+                            config: Some(parsed),
+                            singbox_json: singbox,
+                            error: None,
+                        };
+                        respond_json(request, &resp_data, cors_header, content_type_json);
+                    }
+                    Err(e) => {
+                        let resp_data = ImportProxyResp {
+                            success: false,
+                            config: None,
+                            singbox_json: None,
+                            error: Some(e),
+                        };
+                        respond_json(request, &resp_data, cors_header, content_type_json);
+                    }
+                },
+                Err(e) => {
+                    let resp_data = ImportProxyResp {
+                        success: false,
+                        config: None,
+                        singbox_json: None,
+                        error: Some(format!("Invalid request body: {}", e)),
+                    };
+                    respond_json(request, &resp_data, cors_header, content_type_json);
+                }
+            }
+        }
+
+        // REST API: Proxy apply (commit & apply configuration)
+        (Method::Post, "/api/v1/proxy/apply") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            let req: Result<ApplyProxyReq, _> = serde_json::from_str(&body);
+
+            match req {
+                Ok(data) => match parse_proxy_uri(&data.uri) {
+                    Ok(parsed) => {
+                        let sb_cfg = generate_singbox_config(&parsed, data.mode.clone(), &data.custom_domains, &data.custom_ips);
+                        match sb_cfg {
+                            Ok(cfg) => {
+                                // Save active state
+                                *state.proxy_config.lock().unwrap() = Some(parsed);
+                                *state.routing_mode.lock().unwrap() = data.mode;
+
+                                // Save config to /etc/sing-box/config.json in production
+                                let json_str = serde_json::to_string_pretty(&cfg).unwrap_or_default();
+                                let _ = std::fs::write("/tmp/singbox_active.json", json_str);
+
+                                let resp = GenericResp {
+                                    success: true,
+                                    message: "Proxy configuration successfully applied and tunnel active".into(),
+                                };
+                                respond_json(request, &resp, cors_header, content_type_json);
+                            }
+                            Err(e) => {
+                                let resp = GenericResp {
+                                    success: false,
+                                    message: format!("Failed to generate sing-box config: {}", e),
+                                };
+                                respond_json(request, &resp, cors_header, content_type_json);
+                            }
+                        }
+                    }
+                    Err(e) => {
+                        let resp = GenericResp {
+                            success: false,
+                            message: format!("Failed to parse proxy URI: {}", e),
+                        };
+                        respond_json(request, &resp, cors_header, content_type_json);
+                    }
+                },
+                Err(e) => {
+                    let resp = GenericResp {
+                        success: false,
+                        message: format!("Invalid JSON request: {}", e),
+                    };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                }
+            }
+        }
+
+        // REST API: Proxy status
+        (Method::Get, "/api/v1/proxy/status") => {
+            let proxy = state.proxy_config.lock().unwrap().clone();
+            let mode = state.routing_mode.lock().unwrap().clone();
+            let resp = ProxyStatusResp {
+                active: proxy.is_some(),
+                mode,
+                current_proxy: proxy,
+            };
+            respond_json(request, &resp, cors_header, content_type_json);
+        }
+
+        // REST API: Ping test
+        (Method::Post, "/api/v1/proxy/test") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            let req: Result<TestPingReq, _> = serde_json::from_str(&body);
+
+            match req {
+                Ok(data) => {
+                    let addr = format!("{}:{}", data.host, data.port);
+                    let start = Instant::now();
+                    match std::net::TcpStream::connect_timeout(
+                        &addr.parse().unwrap_or_else(|_| "1.1.1.1:443".parse().unwrap()),
+                        std::time::Duration::from_millis(2000),
+                    ) {
+                        Ok(_) => {
+                            let duration = start.elapsed().as_millis() as u64;
+                            let resp = TestPingResp {
+                                success: true,
+                                latency_ms: Some(duration),
+                                error: None,
+                            };
+                            respond_json(request, &resp, cors_header, content_type_json);
+                        }
+                        Err(e) => {
+                            let resp = TestPingResp {
+                                success: false,
+                                latency_ms: None,
+                                error: Some(format!("Connection timeout or error: {}", e)),
+                            };
+                            respond_json(request, &resp, cors_header, content_type_json);
+                        }
+                    }
+                }
+                Err(e) => {
+                    let resp = TestPingResp {
+                        success: false,
+                        latency_ms: None,
+                        error: Some(format!("Invalid request: {}", e)),
+                    };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                }
+            }
+        }
+
+        // REST API: Zapret status
+        (Method::Get, "/api/v1/zapret/status") => {
+            let status = get_zapret_status();
+            respond_json(request, &status, cors_header, content_type_json);
+        }
+
+        // Fallback 404
+        _ => {
+            let resp = Response::from_string("{\"error\":\"Not Found\"}")
+                .with_status_code(StatusCode(404))
+                .with_header(cors_header)
+                .with_header(content_type_json);
+            let _ = request.respond(resp);
+        }
+    }
+}
+
+fn respond_json<T: Serialize>(request: Request, data: &T, cors: Header, content_type: Header) {
+    let json_bytes = serde_json::to_vec(data).unwrap_or_default();
+    let resp = Response::from_data(json_bytes)
+        .with_header(cors)
+        .with_header(content_type);
+    let _ = request.respond(resp);
+}

@@ -1,0 +1,49 @@
+#!/bin/sh
+# FerrumOS Zapret NFQWS DPI Circumvention Service
+# Restores YouTube 4K playback and Discord voice/media in Russia without VPN
+
+NFQWS="/usr/bin/nfqws"
+QNUM=200
+
+start_zapret() {
+    echo "[FerrumOS] Starting Zapret NFQWS DPI bypass..."
+
+    # Ensure NFQUEUE kernel module is loaded
+    modprobe xt_NFQUEUE 2>/dev/null || true
+
+    # Clean old iptables rules
+    iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM 2>/dev/null || true
+    iptables -t mangle -D POSTROUTING -p udp --dport 443 -j DROP 2>/dev/null || true
+
+    # YouTube 4K & HTTPS bypass: Send initial TLS packets to NFQUEUE
+    iptables -t mangle -A POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM
+    # Block QUIC/HTTP3 to force YouTube to use HTTP/2 with NFQWS desync
+    iptables -t mangle -A POSTROUTING -p udp --dport 443 -j DROP
+
+    # Launch nfqws with multi-split, badseq, syndata, and Discord UDP stun desync
+    $NFQWS \
+        --qnum=$QNUM \
+        --dpi-desync=split2 \
+        --dpi-desync-split-pos=1 \
+        --dpi-desync-fooling=badseq \
+        --dpi-desync-cutoff=d4 \
+        --dpi-desync-repeats=2 \
+        --dpi-desync-any-protocol \
+        --daemon
+
+    echo "[FerrumOS] Zapret active: YouTube 4K and Discord voice unblocked."
+}
+
+stop_zapret() {
+    echo "[FerrumOS] Stopping Zapret..."
+    killall nfqws 2>/dev/null || true
+    iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM 2>/dev/null || true
+    iptables -t mangle -D POSTROUTING -p udp --dport 443 -j DROP 2>/dev/null || true
+}
+
+case "$1" in
+    start) start_zapret ;;
+    stop) stop_zapret ;;
+    restart) stop_zapret; sleep 1; start_zapret ;;
+    *) echo "Usage: $0 {start|stop|restart}"; exit 1 ;;
+esac

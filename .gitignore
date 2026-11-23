@@ -1,5 +1,7 @@
 # Target build outputs
 target/
+core/target/
+bin/
 *.trx
 *.bin
 *.lzma

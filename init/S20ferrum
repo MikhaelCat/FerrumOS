@@ -1,0 +1,42 @@
+#!/bin/sh
+# FerrumOS Rust Core Daemon Supervisor
+# Runs the ultra-fast Rust API and Single Page Dashboard
+
+DAEMON="/usr/bin/ferrum-core"
+PIDFILE="/var/run/ferrum-core.pid"
+
+case "$1" in
+    start)
+        echo "[FerrumOS] Starting Ferrum-Core Rust daemon..."
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "[FerrumOS] Ferrum-Core is already running."
+            exit 0
+        fi
+        FERRUM_BIND="0.0.0.0:80" "$DAEMON" > /var/log/ferrum-core.log 2>&1 &
+        echo $! > "$PIDFILE"
+        echo "[FerrumOS] Ferrum-Core started (PID: $(cat "$PIDFILE"))."
+        ;;
+    stop)
+        echo "[FerrumOS] Stopping Ferrum-Core..."
+        if [ -f "$PIDFILE" ]; then
+            kill "$(cat "$PIDFILE")" 2>/dev/null || true
+            rm -f "$PIDFILE"
+        fi
+        ;;
+    restart)
+        $0 stop
+        sleep 1
+        $0 start
+        ;;
+    status)
+        if [ -f "$PIDFILE" ] && kill -0 "$(cat "$PIDFILE")" 2>/dev/null; then
+            echo "[FerrumOS] Ferrum-Core is running (PID: $(cat "$PIDFILE"))."
+        else
+            echo "[FerrumOS] Ferrum-Core is stopped."
+        fi
+        ;;
+    *)
+        echo "Usage: $0 {start|stop|restart|status}"
+        exit 1
+        ;;
+esac
