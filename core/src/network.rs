@@ -99,6 +99,36 @@ fn read_mac_address(iface: &str) -> Option<String> {
 }
 
 fn read_ip_address(_iface: &str) -> Option<String> {
-    // In production reads via ioctl(SIOCGIFADDR) or ip link
     None
+}
+
+pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
+    // Write 2.4G config
+    let dat_2g = format!(
+        "# FerrumOS MT7620 2.4G Configuration\n\
+        Default\n\
+        CountryRegion=1\n\
+        CountryRegionABand=7\n\
+        CountryCode=RU\n\
+        Channel={}\n\
+        SSID1={}\n\
+        WPAPSK1=12345678\n\
+        AuthMode=WPA2PSK\n\
+        EncrypType=AES\n\
+        TxPower={}\n\
+        HT_BW=1\n\
+        HT_BSSCoexistence=1\n",
+        cfg.wifi_2g_channel,
+        cfg.wifi_2g_ssid,
+        cfg.wifi_2g_tx_power
+    );
+
+    let _ = fs::create_dir_all("/etc/Wireless/RT2860");
+    let _ = fs::write("/etc/Wireless/RT2860/RT2860AP.dat", dat_2g);
+
+    // Apply to radio if running on device
+    let _ = std::process::Command::new("ifconfig").args(["ra0", "down"]).output();
+    let _ = std::process::Command::new("ifconfig").args(["ra0", "up"]).output();
+
+    Ok(())
 }

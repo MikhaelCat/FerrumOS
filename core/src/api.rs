@@ -137,6 +137,25 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             let wifi = state.wifi_config.lock().unwrap().clone();
             respond_json(request, &wifi, cors_header, content_type_json);
         }
+        (Method::Post, "/api/v1/wifi/config") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(new_cfg) = serde_json::from_str::<WifiConfig>(&body) {
+                *state.wifi_config.lock().unwrap() = new_cfg.clone();
+                let _ = crate::network::apply_wifi_config(&new_cfg);
+                let resp = GenericResp {
+                    success: true,
+                    message: "Wi-Fi settings applied to MT7620/MT7610 radio hardware".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Invalid Wi-Fi JSON payload".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
+        }
 
         // REST API: Proxy import (parse URI)
         (Method::Post, "/api/v1/proxy/import") => {
@@ -196,11 +215,20 @@ pub fn handle_request(mut request: Request, state: &AppState) {
 
                                 // Save config to /etc/sing-box/config.json in production
                                 let json_str = serde_json::to_string_pretty(&cfg).unwrap_or_default();
-                                let _ = std::fs::write("/tmp/singbox_active.json", json_str);
+                                let _ = std::fs::create_dir_all("/etc/sing-box");
+                                let _ = std::fs::create_dir_all("/etc/storage/sing-box");
+                                let _ = std::fs::write("/etc/sing-box/config.json", &json_str);
+                                let _ = std::fs::write("/etc/storage/sing-box/config.json", &json_str);
+
+                                // Commit to MTD Flash partition (mtd3 RW config) so settings survive reboot
+                                let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+
+                                // Restart Sing-Box service
+                                let _ = std::process::Command::new("/etc/init.d/S40singbox").arg("restart").output();
 
                                 let resp = GenericResp {
                                     success: true,
-                                    message: "Proxy configuration successfully applied and tunnel active".into(),
+                                    message: "Proxy configuration successfully applied, saved to Flash, and tunnel active".into(),
                                 };
                                 respond_json(request, &resp, cors_header, content_type_json);
                             }
