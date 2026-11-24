@@ -1,90 +1,110 @@
-# FerrumOS: Anti-Brick & Fail-Safe Architecture
+# FerrumOS Fail-Safe and Anti-Brick Architecture
 
-One of the most dangerous risks when writing custom firmware for embedded routers is **bricking** the device (making it unable to boot or inaccessible over the network).
-
-**FerrumOS** incorporates a multi-layer **Anti-Brick Guarantee** designed to prevent hardware damage, flash corruption, and software lockouts under any circumstance.
+Firmware corruption and device lockouts pose critical operational risks in embedded network equipment. FerrumOS implements a multi-layer anti-brick architecture designed to maintain hardware integrity, guarantee configuration recovery, and provide emergency restoration mechanisms.
 
 ---
 
-## 1. Threat Analysis: Why Routers Brick
+## 1. Threat Model & Mitigation Matrix
+
+| Failure Mode | Root Cause | FerrumOS Defense Mechanism | Verification Standard |
+| :--- | :--- | :--- | :--- |
+| **Bootloader Corruption** | Accidental or malicious write to `mtd0` | Kernel-level MTD write lock (`MTD_CAP_ROM`) | `EPERM` returned on write attempt |
+| **RF Calibration Loss** | Erasing or modifying `mtd2` EEPROM | Kernel-level MTD write lock (`MTD_CAP_ROM`) | Read-only attribute verified in kernel VFS |
+| **Mid-Write Power Loss** | Power severed during flash write | Atomic A/B configuration double-buffering | CRC32 validated; automatic fallback |
+| **Network Lockout** | Malformed IP or firewall configuration | Hardware Reset Pin Failsafe Mode | Boots to static RAM recovery (`192.168.1.1`)|
+| **Kernel Freeze / Panic** | Infinite loop or memory exhaustion | Hardware Watchdog Timer (MT7620 WDT) | 30s timeout triggers hardware reset |
+| **Corrupt Image Flash** | Truncated or corrupted firmware upload | Pre-flash header, model, and CRC32 checks | Rejection prior to flash erase |
+
+---
+
+## 2. Technical Safeguard Specifications
+
+### 2.1 Kernel-Enforced Critical Partition Protection (`mtd0` & `mtd2`)
+
+The SPI NOR flash contains two partitions critical to hardware viability:
+- **`mtd0` (Bootloader, 192 KB)**: Contains low-level board initialization and U-Boot binary.
+- **`mtd2` (Factory EEPROM, 64 KB)**: Contains unique radio frequency power amplification calibration offsets, crystal frequency adjustments, and factory MAC addresses for the 2.4 GHz and 5 GHz transceivers.
+
+In the Linux kernel MTD driver (`drivers/mtd/mtdsplitter_parts.h`), write operations to these partitions are permanently disabled:
+
+```c
+/* Enforce Read-Only at the kernel VFS layer */
+parts[0].mask_flags = MTD_WRITEABLE; /* mtd0 Bootloader is permanently READ-ONLY */
+parts[2].mask_flags = MTD_WRITEABLE; /* mtd2 Factory EEPROM is permanently READ-ONLY */
+```
+
+Any attempt by a user process, shell script, or daemon to open `/dev/mtd0` or `/dev/mtd2` with `O_WRONLY` or `O_RDWR` flags results in an immediate `EPERM` (Operation not permitted) error. Hardware calibration data cannot be erased or overwritten from userland.
+
+---
+
+### 2.2 Transactional A/B Configuration Double-Buffering
+
+The persistent configuration partition `mtd1` (64 KB) is partitioned into two 32 KB blocks: **Slot A** and **Slot B**.
+
+Each block adheres to the following binary structure:
+1. **Magic Header** (4 bytes): `0x46455252` (`"FERR"`).
+2. **Generation Counter** (8 bytes): Monotonically increasing unsigned 64-bit integer.
+3. **CRC32 Checksum** (4 bytes): IEEE 802.3 CRC32 calculated over the payload.
+4. **Configuration Payload** (Variable): Serialized JSON configuration.
 
 ```
-+------------------------------------+-------------------------------------------+
-| Common Bricking Cause             | FerrumOS Defense Mechanism                |
-+------------------------------------+-------------------------------------------+
-| Overwriting Factory RF Calibration | Kernel-level MTD write lock on mtd2       |
-| Corrupting Bootloader (U-Boot)     | Kernel-level MTD write lock on mtd0       |
-| Power loss during Flash write      | Atomic A/B double-buffering with CRC32   |
-| Bad network config / IP lockout    | Automatic Failsafe RAM reset (192.168.1.1)|
-| Kernel crash / Infinite reboot loop| Hardware Watchdog (WDT) + Safe-Mode Boot  |
-| Flashing corrupt / truncated image | Pre-flash header, size & SHA-256 checks   |
-+------------------------------------+-------------------------------------------+
++---------------------------------------------------------------+
+|                    mtd1 Partition (64 KB)                     |
++-------------------------------+-------------------------------+
+|         Slot A (32 KB)        |         Slot B (32 KB)        |
++-------------------------------+-------------------------------+
+| Header: "FERR" (0x46455252)   | Header: "FERR" (0x46455252)   |
+| Generation Counter (u64)      | Generation Counter (u64)      |
+| Checksum: CRC32 (u32)         | Checksum: CRC32 (u32)         |
+| Serialized Config Payload     | Serialized Config Payload     |
++-------------------------------+-------------------------------+
 ```
 
----
+**Write Sequence**:
+1. Identify the inactive slot (slot with lower generation counter or corrupted CRC).
+2. Write updated configuration payload to the inactive slot.
+3. Calculate CRC32 checksum over the payload and write to header.
+4. Atomically commit the updated generation counter (`max(gen_a, gen_b) + 1`).
 
-## 2. Multi-Layer Anti-Brick Guarantees
-
-### Layer 1: Hardware-Enforced Partition Locking (`mtd0` & `mtd2`)
-- **Partition `mtd0` (Bootloader / U-Boot, 192 KB)**: Contains the low-level hardware initialization code.
-- **Partition `mtd2` (Factory / EEPROM, 64 KB)**: Contains unique radio frequency (RF) power amplification tables, crystal calibration offsets, and factory MAC addresses for the MT7620 2.4G and MT7610 5G radios.
-- **FerrumOS Protection**:
-  In the kernel driver (`linux-3.4.x/drivers/mtd/mtdsplitter_parts.h`), `mtd0` and `mtd2` are explicitly registered with read-only flags:
-  ```c
-  /* Enforce Read-Only at the kernel VFS layer */
-  parts[0].mask_flags = MTD_WRITEABLE; // mtd0 Bootloader is READ-ONLY
-  parts[2].mask_flags = MTD_WRITEABLE; // mtd2 Factory EEPROM is READ-ONLY
-  ```
-  Even if a malicious script, corrupted process, or root command runs `dd if=/dev/zero of=/dev/mtd2` or `mtd_write`, the kernel returns `EPERM` (Operation not permitted). The hardware calibration is 100% immune to erasure.
+**Recovery Protocol**:
+On startup, `ferrum-core` reads headers from both slots:
+- If Slot A has a valid CRC32 and Slot B is corrupted, Slot A is loaded.
+- If both slots have valid checksums, the slot with the higher generation counter is loaded.
+- If both slots fail CRC32 verification, FerrumOS reverts to an immutable in-memory default configuration (`192.168.1.1/24`, DHCP enabled) without halting the boot process.
 
 ---
 
-### Layer 2: Atomic Configuration Double-Buffering
-- The persistent configuration partition `mtd1` (64 KB) is split into two 32 KB blocks: **Slot A** and **Slot B**.
-- Each block contains:
-  1. Magic Header (`0x46455252` — `"FERR"`).
-  2. 64-bit Generation Counter.
-  3. CRC32 Checksum.
-  4. Serialized Configuration Payload.
-- **Write Process**:
-  1. FerrumOS writes the new configuration to the inactive slot.
-  2. Computes and writes the CRC32 checksum.
-  3. Atomically updates the generation counter and commits to flash.
-- **Power Loss Recovery**:
-  If power is disconnected while writing, the active slot remains intact. On boot, FerrumOS calculates the CRC32 of both slots:
-  - If Slot B is invalid/corrupt, it boots from Slot A.
-  - If both are invalid, it loads the **immutable in-memory factory default configuration** (`192.168.1.1`, DHCP enabled) without crashing.
+### 2.3 Hardware Reset Pin Failsafe Mode (GPIO 13)
+
+The physical Reset button is connected to MediaTek MT7620A **GPIO 13** (Active LOW).
+
+- **Early Boot Detection**: During the initial 3 seconds of the kernel boot process (indicated by rapid blinking of the system LED), holding the Reset button triggers emergency failsafe mode.
+- **Failsafe Execution Sequence**:
+  1. Bypasses loading of persistent flash configuration (`mtd1`).
+  2. Mounts the root filesystem as a read-only RAM overlay (`tmpfs`).
+  3. Configures interface `br0` with static IP `192.168.1.1/24` and starts a minimal DHCP server.
+  4. Launches an in-memory emergency recovery HTTP endpoint on port 80.
+  5. Allows the operator to upload a replacement firmware image or reset configuration via browser.
 
 ---
 
-### Layer 3: Physical Reset Pin Failsafe Mode (GPIO 13)
-- The physical Reset button is wired to SoC pin **GPIO 13** (Active LOW).
-- **Boot Detection**:
-  - During the first 3 seconds of boot (when the power LED blinks rapidly), holding the Reset button triggers **FerrumOS Emergency Failsafe**.
-- **Failsafe Behavior**:
-  1. Completely ignores any settings on flash.
-  2. Mounts RootFS in read-only RAM overlay.
-  3. Configures LAN interface `br0` with static IP `192.168.1.1/24`.
-  4. Starts a minimal emergency HTTP recovery server on port 80.
-  5. The user can open `http://192.168.1.1/` in any browser and upload a clean firmware image or reset configuration in one click.
+### 2.4 Hardware Watchdog Timer (MT7620 WDT)
+
+The MT7620A SoC incorporates a hardware watchdog timer connected directly to the CPU internal reset line.
+
+- **Supervision**: `ferrum-core` writes keepalive pulses to `/dev/watchdog` every 5 seconds.
+- **Timeout**: The watchdog expiration deadline is configured to 30 seconds.
+- **Panic Recovery**: If a kernel deadlock, memory starvation freeze, or process hang prevents keepalive writes for 30 consecutive seconds, the hardware watchdog pulls the CPU reset line, initiating a clean reboot.
+- **Boot Loop Safeguard**: If three consecutive watchdog reboots occur within a 5-minute window, FerrumOS automatically boots in rescue safe-mode with custom firewall rules, proxy services, and user scripts disabled.
 
 ---
 
-### Layer 4: Hardware Watchdog Timer (MT7620 WDT)
-- The MT7620A SoC has a built-in hardware watchdog timer linked directly to the CPU reset line.
-- The supervisor daemon (`ferrum-stated`) pings `/dev/watchdog` every 5 seconds.
-- If the system hangs, locks in an infinite loop, or runs out of memory:
-  1. Watchdog pings stop.
-  2. After 30 seconds of inactivity, the hardware timer pulls the CPU reset line.
-  3. The router reboots cleanly into Safe-Mode.
-  4. If three consecutive watchdog resets occur within 5 minutes, FerrumOS disables all custom user scripts and Zapret DPI rules, booting in clean rescue mode.
+### 2.5 Pre-Flash Image Validation Protocol
 
----
+Prior to executing flash erase or write routines via `mtd_write`, firmware upgrade images undergo strict validation:
 
-### Layer 5: Pre-Flash Verification & Safe Flashing
-Before `mtd_write` writes a byte of new firmware to `mtd3`/`mtd4`:
-1. **Magic Header Check**: Verifies the TRX header (`0x30524448` — `"HDR0"`).
-2. **Product ID Check**: Confirms the target board matches `"SNR-MD1"`.
-3. **CRC32 & LZMA Integrity**: Unpacks and verifies the kernel compression header.
-4. **Boundary Limit Check**: Confirms the total image size does not exceed `7,929,856 bytes` (to prevent spilling into the Storage partition `mtd5`).
-5. **Sync to RAM**: The entire image is staged in `/tmp` (RAM tmpfs) before writing begins; network drops during upload will never trigger a partial flash.
+1. **Magic Header Verification**: Image must begin with valid TRX header `0x30524448` (`"HDR0"`).
+2. **Platform Compatibility Check**: Board model string embedded in image must match `"SNR-MD1"`.
+3. **Integrity Check**: Verifies image-wide CRC32 checksum against header specification.
+4. **Size Boundary Enforcement**: Verifies total image byte length does not exceed the maximum kernel+rootfs boundary of `8,060,928 bytes`, preventing memory overlap with partition `mtd5`.
+5. **RAM Staging**: Images are staged in RAM (`/tmp`) before flashing; network disconnects during upload will not trigger partial or corrupt flash writes.
