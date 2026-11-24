@@ -1524,6 +1524,8 @@ impl Default for FlowOffloadConfig {
 }
 
 pub fn apply_flow_offload(cfg: &FlowOffloadConfig) -> Result<(), String> {
+    let _ = save_flow_offload_config(cfg);
+
     if cfg.hardware_flow_offload {
         let _ = fs::write("/proc/sys/net/nat/fast_nat", "1");
         let _ = fs::write("/sys/kernel/debug/hw_nat", "1");
@@ -1532,14 +1534,15 @@ pub fn apply_flow_offload(cfg: &FlowOffloadConfig) -> Result<(), String> {
         let _ = fs::write("/sys/kernel/debug/hw_nat", "0");
     }
 
+    // Remove first to ensure idempotency and prevent duplicate rules
+    let _ = Command::new("iptables")
+        .args(["-D", "FORWARD", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "FLOWOFFLOAD"])
+        .output();
+
     if cfg.software_flow_offload {
         let _ = fs::write("/proc/sys/net/netfilter/nf_conntrack_tcp_be_liberal", "1");
         let _ = Command::new("iptables")
             .args(["-I", "FORWARD", "1", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "FLOWOFFLOAD"])
-            .output();
-    } else {
-        let _ = Command::new("iptables")
-            .args(["-D", "FORWARD", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "FLOWOFFLOAD"])
             .output();
     }
 
@@ -1550,7 +1553,25 @@ pub fn apply_flow_offload(cfg: &FlowOffloadConfig) -> Result<(), String> {
     Ok(())
 }
 
+pub fn save_flow_offload_config(cfg: &FlowOffloadConfig) -> Result<(), String> {
+    let json = serde_json::to_string_pretty(cfg).map_err(|e| e.to_string())?;
+    let _ = fs::create_dir_all("/etc/storage");
+    if fs::write("/etc/storage/flow_offload.json", &json).is_err() {
+        let _ = fs::write("/tmp/flow_offload.json", &json);
+    }
+    let _ = Command::new("mtd_storage.sh").arg("save").output();
+    Ok(())
+}
+
 pub fn load_flow_offload_config() -> FlowOffloadConfig {
+    let paths = ["/etc/storage/flow_offload.json", "/tmp/flow_offload.json"];
+    for path in paths {
+        if let Ok(c) = fs::read_to_string(path) {
+            if let Ok(cfg) = serde_json::from_str(&c) {
+                return cfg;
+            }
+        }
+    }
     FlowOffloadConfig::default()
 }
 
@@ -1710,9 +1731,17 @@ pub fn run_wan_speedtest() -> Result<SpeedtestResult, String> {
 }
 
 pub fn apply_guest_network_isolation(cfg: &WifiConfig) -> Result<(), String> {
+    // Delete existing rules first to guarantee clean idempotency and avoid duplicates
+    let _ = Command::new("iptables").args(["-D", "FORWARD", "-i", "ra1", "-o", "br0", "-j", "DROP"]).output();
+    let _ = Command::new("iptables").args(["-D", "FORWARD", "-i", "rai1", "-o", "br0", "-j", "DROP"]).output();
+    let _ = Command::new("iptables").args(["-D", "INPUT", "-i", "ra1", "-p", "tcp", "--dport", "8080", "-j", "DROP"]).output();
+    let _ = Command::new("iptables").args(["-D", "INPUT", "-i", "ra1", "-p", "tcp", "--dport", "22", "-j", "DROP"]).output();
+    let _ = Command::new("iptables").args(["-D", "INPUT", "-i", "rai1", "-p", "tcp", "--dport", "8080", "-j", "DROP"]).output();
+    let _ = Command::new("iptables").args(["-D", "INPUT", "-i", "rai1", "-p", "tcp", "--dport", "22", "-j", "DROP"]).output();
+    let _ = Command::new("tc").args(["qdisc", "del", "dev", "ra1", "root"]).output();
+    let _ = Command::new("tc").args(["qdisc", "del", "dev", "rai1", "root"]).output();
+
     if !cfg.guest_enabled {
-        let _ = Command::new("iptables").args(["-D", "FORWARD", "-i", "ra1", "-o", "br0", "-j", "DROP"]).output();
-        let _ = Command::new("iptables").args(["-D", "FORWARD", "-i", "rai1", "-o", "br0", "-j", "DROP"]).output();
         return Ok(());
     }
 
@@ -1727,8 +1756,8 @@ pub fn apply_guest_network_isolation(cfg: &WifiConfig) -> Result<(), String> {
 
     if cfg.guest_bandwidth_limit_mbps > 0 {
         let rate_str = format!("{}mbit", cfg.guest_bandwidth_limit_mbps);
-        let _ = Command::new("tc").args(["qdisc", "del", "dev", "ra1", "root"]).output();
         let _ = Command::new("tc").args(["qdisc", "add", "dev", "ra1", "root", "tbf", "rate", &rate_str, "burst", "32kbit", "latency", "50ms"]).output();
+        let _ = Command::new("tc").args(["qdisc", "add", "dev", "rai1", "root", "tbf", "rate", &rate_str, "burst", "32kbit", "latency", "50ms"]).output();
     }
 
     Ok(())

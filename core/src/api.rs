@@ -231,7 +231,13 @@ pub const APP_JS: &str = include_str!("../../ui/public/app.js");
 pub const APP_CSS: &str = include_str!("../../ui/public/app.css");
 
 pub fn handle_request(mut request: Request, state: &AppState) {
-    let url = request.url().to_string();
+    let raw_url = request.url().to_string();
+    let path_no_query = raw_url.split('?').next().unwrap_or("/");
+    let clean_path = if path_no_query.len() > 1 && path_no_query.ends_with('/') {
+        path_no_query.trim_end_matches('/')
+    } else {
+        path_no_query
+    };
     let method = request.method().clone();
 
     // Security Headers
@@ -279,7 +285,7 @@ pub fn handle_request(mut request: Request, state: &AppState) {
         return;
     }
 
-    match (method, url.as_str()) {
+    match (method, clean_path) {
         // UI static assets
         (Method::Get, "/") | (Method::Get, "/index.html") | (Method::Head, "/") | (Method::Head, "/index.html") => {
             let resp = Response::from_string(INDEX_HTML)
