@@ -286,6 +286,12 @@ pub fn handle_request(mut request: Request, state: &AppState) {
     }
 
     match (method, clean_path) {
+        // Padavan internal watchdog health check
+        (Method::Get, "/httpd_check.htm") | (Method::Head, "/httpd_check.htm") => {
+            let resp = Response::from_string("ASUSTeK\n")
+                .with_header(content_type_html);
+            let _ = request.respond(resp);
+        }
         // UI static assets
         (Method::Get, "/") | (Method::Get, "/index.html") | (Method::Head, "/") | (Method::Head, "/index.html") => {
             let resp = Response::from_string(INDEX_HTML)

@@ -9,14 +9,18 @@ start_sshd() {
     echo "[FerrumOS] Starting Dropbear SSH service on port 22..."
     mkdir -p "$STORAGE_DIR" /var/empty
 
-    # Ensure root has password "root" if shadow doesn't exist
-    if [ ! -f /etc/shadow ] || ! grep -q "root:" /etc/shadow; then
+    # Ensure root has password "root" (login: root / password: root)
+    if [ ! -f /etc/shadow ]; then
         echo "root:\$1\$FerrumOS\$XFku7xAtmH/m6ShlEVSvs.:19000:0:99999:7:::" > /etc/shadow
         chmod 600 /etc/shadow
+    elif ! grep -q "^root:" /etc/shadow; then
+        echo "root:\$1\$FerrumOS\$XFku7xAtmH/m6ShlEVSvs.:19000:0:99999:7:::" >> /etc/shadow
     fi
-    if [ ! -f /etc/passwd ] || ! grep -q "root:" /etc/passwd; then
+    if [ ! -f /etc/passwd ]; then
         echo "root:x:0:0:root:/home/root:/bin/sh" > /etc/passwd
         chmod 644 /etc/passwd
+    elif ! grep -q "^root:" /etc/passwd; then
+        echo "root:x:0:0:root:/home/root:/bin/sh" >> /etc/passwd
     fi
 
     # Generate host key if not present

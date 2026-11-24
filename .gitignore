@@ -2,6 +2,8 @@
 target/
 core/target/
 bin/
+build_tmp/
+release/
 *.trx
 *.bin
 *.lzma

@@ -13,10 +13,28 @@ fn main() {
     println!("  Protocols: VLESS Reality (XTLS-Vision) & Hysteria 2   ");
     println!("========================================================");
 
-    let bind_addr = env::var("FERRUM_BIND").unwrap_or_else(|_| "0.0.0.0:8080".into());
+    let mut port: u16 = 80;
+    let mut host = "0.0.0.0".to_string();
+
+    let args: Vec<String> = env::args().collect();
+    let mut i = 1;
+    while i < args.len() {
+        if (args[i] == "-p" || args[i] == "--port") && i + 1 < args.len() {
+            if let Ok(p) = args[i + 1].parse::<u16>() {
+                port = p;
+            }
+            i += 1;
+        } else if (args[i] == "-b" || args[i] == "--bind") && i + 1 < args.len() {
+            host = args[i + 1].clone();
+            i += 1;
+        }
+        i += 1;
+    }
+
+    let bind_addr = env::var("FERRUM_BIND").unwrap_or_else(|_| format!("{}:{}", host, port));
     let addr: SocketAddr = bind_addr
         .parse()
-        .unwrap_or_else(|_| "0.0.0.0:8080".parse().unwrap());
+        .unwrap_or_else(|_| format!("0.0.0.0:{}", port).parse().unwrap());
 
     let server = match Server::http(addr) {
         Ok(s) => {

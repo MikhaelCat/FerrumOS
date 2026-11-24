@@ -16,7 +16,7 @@ ROOT_DIR="$(cd "${SCRIPT_DIR}/.." && pwd)"
 PADAVAN_ROOT="/home/mihail/padavan_build/padavan-ng/trunk"
 TOOLS_DIR="${PADAVAN_ROOT}/tools"
 OUT_DIR="${ROOT_DIR}/release"
-WORK_DIR="/tmp/ferrum_build"
+WORK_DIR="${ROOT_DIR}/build_tmp"
 
 mkdir -p "${OUT_DIR}" "${WORK_DIR}"
 
@@ -35,26 +35,30 @@ rm -rf "${WORK_DIR}/romfs"
 cp -a "${PADAVAN_ROOT}/romfs" "${WORK_DIR}/romfs"
 
 # Install Ferrum-Core binary
-echo "[3/5] Installing Ferrum-Core Rust daemon and init services..."
-mkdir -p "${WORK_DIR}/romfs/usr/bin" "${WORK_DIR}/romfs/etc/init.d"
+echo "[3/5] Installing Ferrum-Core Rust daemon, symlinks, and init services..."
+mkdir -p "${WORK_DIR}/romfs/usr/bin" "${WORK_DIR}/romfs/etc_ro/init.d"
 cp "${ROOT_DIR}/bin/ferrum-core-packed" "${WORK_DIR}/romfs/usr/bin/ferrum-core"
 chmod +x "${WORK_DIR}/romfs/usr/bin/ferrum-core"
 
-# Install Init Scripts
-cp "${ROOT_DIR}/init/S01switch" "${WORK_DIR}/romfs/etc/init.d/S01switch"
-cp "${ROOT_DIR}/init/S10network" "${WORK_DIR}/romfs/etc/init.d/S10network"
-cp "${ROOT_DIR}/init/S15ssh" "${WORK_DIR}/romfs/etc/init.d/S15ssh"
-cp "${ROOT_DIR}/init/S20ferrum" "${WORK_DIR}/romfs/etc/init.d/S20ferrum"
-cp "${ROOT_DIR}/init/S30zapret" "${WORK_DIR}/romfs/etc/init.d/S30zapret"
-cp "${ROOT_DIR}/init/S40singbox" "${WORK_DIR}/romfs/etc/init.d/S40singbox"
-chmod +x "${WORK_DIR}/romfs/etc/init.d/"*
+# Replace legacy C httpd with ferrum-core so Padavan rc starts Ferrum-Core on port 80
+rm -f "${WORK_DIR}/romfs/usr/sbin/httpd"
+ln -sf /usr/bin/ferrum-core "${WORK_DIR}/romfs/usr/sbin/httpd"
 
-# Ensure S15ssh and S20ferrum are started automatically in rc
-if [ -d "${WORK_DIR}/romfs/etc_ro/rc.d" ]; then
-    cp "${ROOT_DIR}/init/S15ssh" "${WORK_DIR}/romfs/etc_ro/rc.d/S15ssh"
-    cp "${ROOT_DIR}/init/S20ferrum" "${WORK_DIR}/romfs/etc_ro/rc.d/S20ferrum"
-    chmod +x "${WORK_DIR}/romfs/etc_ro/rc.d/"*
-fi
+# Install Init Scripts into /etc_ro/init.d (read-only persistent rootfs)
+cp "${ROOT_DIR}/init/S01switch" "${WORK_DIR}/romfs/etc_ro/init.d/S01switch"
+cp "${ROOT_DIR}/init/S10network" "${WORK_DIR}/romfs/etc_ro/init.d/S10network"
+cp "${ROOT_DIR}/init/S15ssh" "${WORK_DIR}/romfs/etc_ro/init.d/S15ssh"
+cp "${ROOT_DIR}/init/S20ferrum" "${WORK_DIR}/romfs/etc_ro/init.d/S20ferrum"
+cp "${ROOT_DIR}/init/S30zapret" "${WORK_DIR}/romfs/etc_ro/init.d/S30zapret"
+cp "${ROOT_DIR}/init/S40singbox" "${WORK_DIR}/romfs/etc_ro/init.d/S40singbox"
+chmod +x "${WORK_DIR}/romfs/etc_ro/init.d/"*
+
+# Patch dev_init.sh so that /etc/init.d is symlinked to /etc_ro/init.d after tmpfs mount
+# and Dropbear SSH is started early with root:root credentials
+sed -i '/mount -t tmpfs tmpfs \/etc/a \ln -sf /etc_ro/init.d /etc/init.d\n/etc/init.d/S15ssh start &' "${WORK_DIR}/romfs/sbin/dev_init.sh"
+
+# Ensure mtd_storage.sh starts SSH and zapret in default started_script.sh
+sed -i 's|/usr/bin/run_zapret.sh start &|/etc/init.d/S15ssh start \&\n/etc/init.d/S30zapret start \&|g' "${WORK_DIR}/romfs/sbin/mtd_storage.sh"
 
 echo "[4/5] Packing SquashFS XZ rootfs..."
 RAMDISK="${WORK_DIR}/ramdisk"
