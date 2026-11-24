@@ -1,7 +1,8 @@
 # Target build outputs
 target/
 core/target/
-bin/
+bin/*
+!bin/sing-box
 build_tmp/
 release/
 *.trx

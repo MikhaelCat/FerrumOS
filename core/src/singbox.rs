@@ -380,7 +380,12 @@ pub fn generate_singbox_config(
                 },
                 DnsServer {
                     tag: "dns-remote".into(),
-                    address: "tls://1.1.1.1".into(),
+                    address: "8.8.8.8".into(),
+                    detour: Some(proxy.tag.clone()),
+                },
+                DnsServer {
+                    tag: "dns-remote-backup".into(),
+                    address: "1.1.1.1".into(),
                     detour: Some(proxy.tag.clone()),
                 },
             ],
@@ -392,9 +397,9 @@ pub fn generate_singbox_config(
             tag: "tun-in".into(),
             interface_name: Some("tun0".into()),
             inet4_address: Some("172.19.0.1/30".into()),
-            auto_route: true,
+            auto_route: false,
             strict_route: false,
-            auto_redirect: true,
+            auto_redirect: false,
             stack: Some("system".into()), // lowest memory overhead
             sniff: true,
             sniff_override_destination: true,

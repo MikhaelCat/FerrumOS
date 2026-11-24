@@ -143,9 +143,29 @@ impl AppState {
             });
         }
 
+        let proxy_enabled_arc = Arc::new(Mutex::new(init_proxy_enabled));
+        let watchdog_proxy = Arc::clone(&proxy_enabled_arc);
+        std::thread::spawn(move || {
+            loop {
+                std::thread::sleep(std::time::Duration::from_secs(10));
+                let enabled = *watchdog_proxy.lock().unwrap();
+                if enabled {
+                    let alive = std::process::Command::new("pidof")
+                        .arg("sing-box")
+                        .output()
+                        .map(|o| o.status.success() && !o.stdout.is_empty())
+                        .unwrap_or(false);
+                    // If sing-box is not running, but tun0 or routing rules might exist, flush rules to prevent network blackhole
+                    if !alive && (std::path::Path::new("/sys/class/net/tun0").exists() || !std::path::Path::new("/tmp/sing-box").exists()) {
+                        let _ = std::process::Command::new("/etc/init.d/S40singbox").arg("stop").output();
+                    }
+                }
+            }
+        });
+
         AppState {
             proxy_config: Arc::new(Mutex::new(init_proxy_cfg)),
-            proxy_enabled: Arc::new(Mutex::new(init_proxy_enabled)),
+            proxy_enabled: proxy_enabled_arc,
             routing_mode: Arc::new(Mutex::new(init_routing_mode)),
             proxy_user_state: Arc::new(Mutex::new(saved_proxy_user)),
             zapret_config: Arc::new(Mutex::new(zapret_cfg)),
@@ -312,36 +332,33 @@ struct CoreUploadResp {
 }
 
 fn install_singbox_core(url: Option<&str>) -> Result<String, String> {
-    let target_url = url.unwrap_or("https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-mipsle-softfloat.tar.gz");
-    let output = std::process::Command::new("wget")
-        .args(["-q", "-O", "/tmp/sing-box.tar.gz", target_url])
-        .output()
-        .map_err(|e| format!("Ошибка вызова wget: {}", e))?;
-
-    if !output.status.success() {
-        return Err("Не удалось загрузить архив ядра Sing-Box через wget. Проверьте подключение к сети.".into());
-    }
-
-    let untar = std::process::Command::new("tar")
-        .args(["-xzf", "/tmp/sing-box.tar.gz", "-C", "/tmp"])
-        .output()
-        .map_err(|e| format!("Ошибка распаковки архива: {}", e))?;
-
-    if !untar.status.success() {
-        return Err("Ошибка при распаковке tar.gz архива".into());
-    }
-
+    // 1. Clean up old temporary files to maximize free RAM in /tmp (tmpfs)
+    let _ = std::fs::remove_file("/tmp/sing-box.download");
     let _ = std::fs::remove_file("/tmp/sing-box.tar.gz");
+    let _ = std::fs::remove_file("/tmp/sing-box.gz");
 
-    if !std::path::Path::new("/tmp/sing-box").exists() {
-        if let Ok(entries) = std::fs::read_dir("/tmp") {
-            for entry in entries.flatten() {
-                let p = entry.path();
-                if p.is_dir() {
-                    let candidate = p.join("sing-box");
-                    if candidate.exists() {
-                        let _ = std::fs::rename(&candidate, "/tmp/sing-box");
-                        let _ = std::fs::remove_dir_all(&p);
+    // Primary URL: optimized, pre-packed 7.4 MB binary via jsDelivr CDN (fast & unblocked in Russia)
+    // Fallback URL: direct GitHub Raw
+    const JSDELIVR_URL: &str = "https://cdn.jsdelivr.net/gh/MikhaelCat/FerrumOS@main/bin/sing-box";
+    const GITHUB_RAW_URL: &str = "https://raw.githubusercontent.com/MikhaelCat/FerrumOS/main/bin/sing-box";
+
+    let urls_to_try: Vec<&str> = if let Some(u) = url {
+        vec![u]
+    } else {
+        vec![JSDELIVR_URL, GITHUB_RAW_URL]
+    };
+
+    let mut download_success = false;
+    for target_url in urls_to_try {
+        let output = std::process::Command::new("wget")
+            .args(["-q", "-T", "35", "-O", "/tmp/sing-box.download", target_url])
+            .output();
+
+        if let Ok(out) = output {
+            if out.status.success() && std::path::Path::new("/tmp/sing-box.download").exists() {
+                if let Ok(meta) = std::fs::metadata("/tmp/sing-box.download") {
+                    if meta.len() >= 100_000 {
+                        download_success = true;
                         break;
                     }
                 }
@@ -349,12 +366,65 @@ fn install_singbox_core(url: Option<&str>) -> Result<String, String> {
         }
     }
 
-    if std::path::Path::new("/tmp/sing-box").exists() {
-        let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
-        Ok("Ядро Sing-Box успешно загружено в RAM (/tmp/sing-box) и готово к работе".into())
-    } else {
-        Err("Исполняемый файл sing-box не обнаружен после распаковки архива".into())
+    if !download_success {
+        let _ = std::fs::remove_file("/tmp/sing-box.download");
+        return Err("Не удалось загрузить бинарник ядра Sing-Box через wget. Проверьте подключение к сети или загрузите файл ядра sing-box вручную через веб-интерфейс.".into());
     }
+
+    let file_bytes = match std::fs::read("/tmp/sing-box.download") {
+        Ok(b) => b,
+        Err(e) => return Err(format!("Ошибка чтения загруженного файла: {}", e)),
+    };
+
+    // If already an executable ELF binary (standalone UPX packed):
+    if file_bytes.len() >= 4 && file_bytes[0..4] == [0x7f, b'E', b'L', b'F'] {
+        let _ = std::fs::rename("/tmp/sing-box.download", "/tmp/sing-box");
+        let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
+        return Ok("Ядро Sing-Box (MIPS с поддержкой VLESS & Hysteria 2) успешно загружено в RAM (/tmp/sing-box) и готово к работе".into());
+    }
+
+    // If gzip compressed (.gz or .tar.gz):
+    if file_bytes.len() >= 2 && file_bytes[0] == 0x1f && file_bytes[1] == 0x8b {
+        let _ = std::process::Command::new("tar")
+            .args(["-xzf", "/tmp/sing-box.download", "-C", "/tmp"])
+            .output();
+
+        let _ = std::fs::remove_file("/tmp/sing-box.download");
+
+        if !std::path::Path::new("/tmp/sing-box").exists() {
+            if let Ok(entries) = std::fs::read_dir("/tmp") {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        let candidate = p.join("sing-box");
+                        if candidate.exists() {
+                            let _ = std::fs::rename(&candidate, "/tmp/sing-box");
+                            let _ = std::fs::remove_dir_all(&p);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        if !std::path::Path::new("/tmp/sing-box").exists() {
+            let gz_path = "/tmp/sing-box.gz";
+            let _ = std::fs::write(gz_path, &file_bytes);
+            let _ = std::process::Command::new("gzip").args(["-d", "-f", gz_path]).output();
+            let _ = std::fs::remove_file(gz_path);
+        }
+
+        if std::path::Path::new("/tmp/sing-box").exists() {
+            let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
+            return Ok("Ядро Sing-Box успешно распаковано в RAM (/tmp/sing-box) и готово к работе".into());
+        }
+
+        return Err("Ошибка при распаковке sing-box из архива".into());
+    }
+
+    let _ = std::fs::rename("/tmp/sing-box.download", "/tmp/sing-box");
+    let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
+    Ok("Ядро Sing-Box успешно сохранено в RAM (/tmp/sing-box)".into())
 }
 
 fn upload_singbox_core(bytes: &[u8]) -> Result<usize, String> {
@@ -362,25 +432,59 @@ fn upload_singbox_core(bytes: &[u8]) -> Result<usize, String> {
         return Err("Размер файла слишком мал для исполняемого ядра Sing-Box".into());
     }
 
-    if bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b {
-        let gz_path = "/tmp/sing-box.gz";
-        std::fs::write(gz_path, bytes).map_err(|e| format!("Ошибка записи архива: {}", e))?;
-        let _ = std::process::Command::new("gzip").args(["-d", "-f", gz_path]).output();
-        if std::path::Path::new("/tmp/sing-box").exists() {
-            let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
-            let size = std::fs::metadata("/tmp/sing-box").map(|m| m.len() as usize).unwrap_or(bytes.len());
-            return Ok(size);
-        } else {
-            return Err("Ошибка распаковки sing-box.gz".into());
-        }
-    }
-
+    // Direct ELF binary:
     if bytes.len() >= 4 && bytes[0..4] == [0x7f, b'E', b'L', b'F'] {
         std::fs::write("/tmp/sing-box", bytes).map_err(|e| format!("Ошибка записи /tmp/sing-box: {}", e))?;
         let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
         return Ok(bytes.len());
     }
 
+    // Gzip archive (.tar.gz or .gz)
+    if bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b {
+        let tmp_archive = "/tmp/singbox_uploaded.tmp";
+        std::fs::write(tmp_archive, bytes).map_err(|e| format!("Ошибка записи архива: {}", e))?;
+
+        // 1. Try tar -xzf first
+        let _ = std::process::Command::new("tar")
+            .args(["-xzf", tmp_archive, "-C", "/tmp"])
+            .output();
+
+        let _ = std::fs::remove_file(tmp_archive);
+
+        if !std::path::Path::new("/tmp/sing-box").exists() {
+            if let Ok(entries) = std::fs::read_dir("/tmp") {
+                for entry in entries.flatten() {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        let candidate = p.join("sing-box");
+                        if candidate.exists() {
+                            let _ = std::fs::rename(&candidate, "/tmp/sing-box");
+                            let _ = std::fs::remove_dir_all(&p);
+                            break;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. If tar didn't produce /tmp/sing-box, try gzip -d
+        if !std::path::Path::new("/tmp/sing-box").exists() {
+            let gz_path = "/tmp/sing-box.gz";
+            let _ = std::fs::write(gz_path, bytes);
+            let _ = std::process::Command::new("gzip").args(["-d", "-f", gz_path]).output();
+            let _ = std::fs::remove_file(gz_path);
+        }
+
+        if std::path::Path::new("/tmp/sing-box").exists() {
+            let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
+            let size = std::fs::metadata("/tmp/sing-box").map(|m| m.len() as usize).unwrap_or(bytes.len());
+            return Ok(size);
+        } else {
+            return Err("Ошибка извлечения исполняемого файла sing-box из загруженного архива".into());
+        }
+    }
+
+    // Direct save fallback
     std::fs::write("/tmp/sing-box", bytes).map_err(|e| format!("Ошибка сохранения: {}", e))?;
     let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
     Ok(bytes.len())

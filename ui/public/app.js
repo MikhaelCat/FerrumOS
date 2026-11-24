@@ -559,7 +559,7 @@ function initProxyManager() {
         btnInstallCore.disabled = true;
         btnInstallCore.textContent = "⏳ Загрузка в RAM...";
         if (coreActionStatus) {
-            coreActionStatus.textContent = "Скачивание и распаковка Sing-Box ядра для MT7620 MIPS...";
+            coreActionStatus.textContent = "Загрузка оптимизированного ядра Sing-Box (7.4 МБ) в RAM роутера...";
             coreActionStatus.style.color = "#94a3b8";
         }
         try {

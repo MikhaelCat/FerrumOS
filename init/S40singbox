@@ -10,6 +10,10 @@ TABLE=100
 FWMARK="0x100"
 
 flush_proxy_rules() {
+    # Remove DNS DNAT redirection
+    while iptables -t nat -D PREROUTING -i br0 -p udp --dport 53 -j DNAT --to-destination 172.19.0.1:53 2>/dev/null; do :; done
+    while iptables -t nat -D PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to-destination 172.19.0.1:53 2>/dev/null; do :; done
+
     # Remove iptables mangle rules
     while iptables -t mangle -D PREROUTING -i br0 -j FERRUM_PROXY 2>/dev/null; do :; done
     iptables -t mangle -F FERRUM_PROXY 2>/dev/null || true
@@ -51,7 +55,8 @@ start_singbox() {
     fi
 
     if [ ! -x "$BIN" ]; then
-        echo "[FerrumOS] Sing-Box binary not found at $BIN. Cannot start tunnel."
+        echo "[FerrumOS] Sing-Box binary not found at $BIN. Flushing rules and stopping."
+        flush_proxy_rules
         exit 1
     fi
 
@@ -138,6 +143,10 @@ start_singbox() {
         # Route DNS (UDP 53) to sing-box tun0 for unpoisoned resolution
         iptables -t mangle -A FERRUM_PROXY -p udp --dport 53 -j MARK --set-xmark $FWMARK/$FWMARK
 
+        # Transparently redirect LAN DNS queries (even if targeted at 192.168.1.1) to sing-box tun0
+        iptables -t nat -I PREROUTING -i br0 -p udp --dport 53 -j DNAT --to-destination 172.19.0.1:53 2>/dev/null || true
+        iptables -t nat -I PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to-destination 172.19.0.1:53 2>/dev/null || true
+
         # Hook into PREROUTING for LAN bridge
         iptables -t mangle -I PREROUTING -i br0 -j FERRUM_PROXY
 
@@ -154,7 +163,9 @@ start_singbox() {
 
         echo "[FerrumOS] Sing-box running (PID $(cat "$PIDFILE")) with full LAN transparent proxying via tun0."
     else
-        echo "[FerrumOS] Warning: tun0 interface did not appear. Check /var/log/sing-box.log."
+        echo "[FerrumOS] Warning: tun0 interface did not appear. Flushing proxy rules to prevent blackhole."
+        flush_proxy_rules
+        exit 1
     fi
 }
 
