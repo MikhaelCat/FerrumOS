@@ -28,6 +28,7 @@ pub struct AppState {
     pub proxy_config: Arc<Mutex<Option<ProxyConfig>>>,
     pub proxy_enabled: Arc<Mutex<bool>>,
     pub routing_mode: Arc<Mutex<RoutingMode>>,
+    pub proxy_user_state: Arc<Mutex<Option<ProxyUserState>>>,
     pub zapret_config: Arc<Mutex<ZapretConfig>>,
     pub auth_password: Arc<Mutex<String>>,
     pub auth_tokens: Arc<Mutex<Vec<String>>>,
@@ -112,10 +113,22 @@ impl AppState {
             .filter(|s| !s.is_empty())
             .unwrap_or_else(|| "root".into());
 
+        let saved_proxy_user = std::fs::read_to_string("/etc/storage/proxy_user_config.json")
+            .ok()
+            .and_then(|s| serde_json::from_str::<ProxyUserState>(&s).ok());
+
+        let (init_proxy_cfg, init_proxy_enabled, init_routing_mode) = if let Some(ref pus) = saved_proxy_user {
+            let parsed = parse_proxy_uri(&pus.uri).ok();
+            (parsed, pus.enabled, pus.mode.clone())
+        } else {
+            (None, false, RoutingMode::SmartRu)
+        };
+
         AppState {
-            proxy_config: Arc::new(Mutex::new(None)),
-            proxy_enabled: Arc::new(Mutex::new(true)),
-            routing_mode: Arc::new(Mutex::new(RoutingMode::SmartRu)),
+            proxy_config: Arc::new(Mutex::new(init_proxy_cfg)),
+            proxy_enabled: Arc::new(Mutex::new(init_proxy_enabled)),
+            routing_mode: Arc::new(Mutex::new(init_routing_mode)),
+            proxy_user_state: Arc::new(Mutex::new(saved_proxy_user)),
             zapret_config: Arc::new(Mutex::new(zapret_cfg)),
             auth_password: Arc::new(Mutex::new(admin_pw)),
             auth_tokens: Arc::new(Mutex::new(Vec::new())),
@@ -182,6 +195,18 @@ struct ImportProxyResp {
     error: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ProxyUserState {
+    pub uri: String,
+    pub mode: RoutingMode,
+    #[serde(default)]
+    pub custom_domains: Vec<String>,
+    #[serde(default)]
+    pub custom_ips: Vec<String>,
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+}
+
 #[derive(Deserialize)]
 struct ApplyProxyReq {
     uri: String,
@@ -205,14 +230,17 @@ struct GenericResp {
 }
 
 #[derive(Serialize)]
-struct ProxyStatusResp {
-    active: bool,
-    enabled: bool,
-    running: bool,
-    core_installed: bool,
-    mode: RoutingMode,
-    current_proxy: Option<ProxyConfig>,
-    status_text: String,
+pub struct ProxyStatusResp {
+    pub active: bool,
+    pub enabled: bool,
+    pub running: bool,
+    pub core_installed: bool,
+    pub mode: RoutingMode,
+    pub current_proxy: Option<ProxyConfig>,
+    pub raw_uri: Option<String>,
+    pub custom_domains: Vec<String>,
+    pub custom_ips: Vec<String>,
+    pub status_text: String,
 }
 
 #[derive(Serialize)]
@@ -896,6 +924,13 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             let _ = request.as_reader().read_to_string(&mut body);
             if let Ok(req) = serde_json::from_str::<ProxyToggleReq>(&body) {
                 *state.proxy_enabled.lock().unwrap() = req.enabled;
+                if let Some(ref mut pus) = *state.proxy_user_state.lock().unwrap() {
+                    pus.enabled = req.enabled;
+                    if let Ok(user_json) = serde_json::to_string_pretty(pus) {
+                        let _ = std::fs::write("/etc/storage/proxy_user_config.json", user_json);
+                        let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+                    }
+                }
                 if req.enabled {
                     let _ = std::process::Command::new("/etc/init.d/S40singbox").arg("restart").output();
                 } else {
@@ -927,7 +962,20 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                                 // Save active state
                                 *state.proxy_config.lock().unwrap() = Some(parsed);
                                 *state.proxy_enabled.lock().unwrap() = data.enabled;
-                                *state.routing_mode.lock().unwrap() = data.mode;
+                                *state.routing_mode.lock().unwrap() = data.mode.clone();
+
+                                let user_state = ProxyUserState {
+                                    uri: data.uri.clone(),
+                                    mode: data.mode.clone(),
+                                    custom_domains: data.custom_domains.clone(),
+                                    custom_ips: data.custom_ips.clone(),
+                                    enabled: data.enabled,
+                                };
+                                *state.proxy_user_state.lock().unwrap() = Some(user_state.clone());
+                                if let Ok(user_json) = serde_json::to_string_pretty(&user_state) {
+                                    let _ = std::fs::create_dir_all("/etc/storage");
+                                    let _ = std::fs::write("/etc/storage/proxy_user_config.json", user_json);
+                                }
 
                                 // Save config to /etc/sing-box/config.json in production
                                 let json_str = serde_json::to_string_pretty(&cfg).unwrap_or_default();
@@ -1005,6 +1053,11 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                 "Туннель отключен".into()
             };
 
+            let user_state = state.proxy_user_state.lock().unwrap().clone();
+            let raw_uri = user_state.as_ref().map(|u| u.uri.clone()).or_else(|| proxy.as_ref().map(|p| p.raw_uri.clone()));
+            let custom_domains = user_state.as_ref().map(|u| u.custom_domains.clone()).unwrap_or_default();
+            let custom_ips = user_state.as_ref().map(|u| u.custom_ips.clone()).unwrap_or_default();
+
             let resp = ProxyStatusResp {
                 active: running && enabled,
                 enabled,
@@ -1012,6 +1065,9 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                 core_installed,
                 mode,
                 current_proxy: proxy,
+                raw_uri,
+                custom_domains,
+                custom_ips,
                 status_text,
             };
             respond_json(request, &resp, cors_header, content_type_json);
@@ -1228,7 +1284,7 @@ mod tests {
         let json = serde_json::to_string(&default_cfg).expect("Serialization failed");
         let parsed: WifiConfig = serde_json::from_str(&json).expect("Deserialization failed");
         assert_eq!(parsed.wifi_2g_ssid, default_cfg.wifi_2g_ssid);
-        assert_eq!(parsed.wifi_5g_bandwidth, 80);
+        assert_eq!(parsed.wifi_5g_bandwidth, 0);
         assert!(parsed.turbo_qam);
         assert!(parsed.preamble_short);
         assert_eq!(parsed.country_code, "RU");
@@ -1334,6 +1390,6 @@ mod tests {
     fn test_auth_default_credentials() {
         let state = crate::AppState::new();
         assert_eq!(*state.auth_password.lock().unwrap(), "root");
-        assert!(*state.proxy_enabled.lock().unwrap());
+        assert!(!*state.proxy_enabled.lock().unwrap());
     }
 }

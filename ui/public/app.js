@@ -70,8 +70,22 @@ function initNavigation() {
                 document.getElementById("page-title").textContent = tabs[target].title;
                 document.getElementById("page-subtitle").textContent = tabs[target].subtitle;
             }
+
+            try {
+                localStorage.setItem("ferrum_active_tab", target);
+                history.replaceState(null, null, `#${target}`);
+            } catch (e) {}
         });
     });
+
+    // Restore previously active tab on page refresh
+    try {
+        const savedTab = window.location.hash.slice(1) || localStorage.getItem("ferrum_active_tab") || "dashboard";
+        const initialBtn = document.querySelector(`.nav-item[data-tab="${savedTab}"]`);
+        if (initialBtn) {
+            initialBtn.click();
+        }
+    } catch (e) {}
 
     document.getElementById("btn-refresh")?.addEventListener("click", () => {
         fetchSystemStatus();
@@ -261,6 +275,21 @@ function initProxyManager() {
     const proxyMasterEnable = document.getElementById("proxy-master-enable");
     const proxyMasterLabel = document.getElementById("proxy-master-label");
 
+    function renderParsedProxy(cfg) {
+        if (!cfg || !parsedCard) return;
+        currentParsedConfig = cfg;
+        parsedCard.classList.remove("d-none");
+
+        document.getElementById("parsed-tag").textContent = cfg.tag || "Новый узел";
+        document.getElementById("parsed-type-badge").textContent = (cfg.proxy_type || "proxy").toUpperCase();
+        document.getElementById("parsed-host").textContent = cfg.server || "-";
+        document.getElementById("parsed-port").textContent = cfg.server_port || "-";
+        document.getElementById("parsed-security").textContent = cfg.security || "none";
+        document.getElementById("parsed-sni").textContent = cfg.sni || "-";
+        document.getElementById("parsed-flow").textContent = cfg.flow || "-";
+        document.getElementById("parsed-fp").textContent = cfg.fingerprint || "-";
+    }
+
     async function syncProxyStatus() {
         try {
             const res = await fetch("/api/v1/proxy/status");
@@ -303,6 +332,29 @@ function initProxyManager() {
                 if (proxyPill) {
                     proxyPill.textContent = "Inactive";
                     proxyPill.className = "badge-status status-neutral";
+                }
+            }
+
+            // Restore saved URI, parsed config, and mode upon refresh
+            if (data.raw_uri && uriInput && !uriInput.value) {
+                uriInput.value = data.raw_uri;
+            }
+            if (data.current_proxy) {
+                renderParsedProxy(data.current_proxy);
+            }
+            if (data.mode) {
+                document.querySelectorAll(".radio-card").forEach(c => {
+                    const isMode = c.getAttribute("data-mode") === data.mode;
+                    c.classList.toggle("active", isMode);
+                });
+                if (customRulesBox) {
+                    customRulesBox.classList.toggle("d-none", data.mode !== "custom");
+                }
+            }
+            if (data.custom_domains && data.custom_domains.length > 0) {
+                const domInput = document.getElementById("custom-domains-input");
+                if (domInput && !domInput.value) {
+                    domInput.value = data.custom_domains.join("\n");
                 }
             }
         } catch (err) {
@@ -358,17 +410,7 @@ function initProxyManager() {
             const data = await res.json();
 
             if (data.success && data.config) {
-                currentParsedConfig = data.config;
-                parsedCard.classList.remove("d-none");
-
-                document.getElementById("parsed-tag").textContent = data.config.tag || "Новый узел";
-                document.getElementById("parsed-type-badge").textContent = (data.config.proxy_type || "proxy").toUpperCase();
-                document.getElementById("parsed-host").textContent = data.config.server;
-                document.getElementById("parsed-port").textContent = data.config.server_port;
-                document.getElementById("parsed-security").textContent = data.config.security || "none";
-                document.getElementById("parsed-sni").textContent = data.config.sni || "-";
-                document.getElementById("parsed-flow").textContent = data.config.flow || "-";
-                document.getElementById("parsed-fp").textContent = data.config.fingerprint || "-";
+                renderParsedProxy(data.config);
                 pingResult.textContent = "";
             } else {
                 alert("Ошибка распознавания: " + (data.error || "Неверный формат ключа"));
@@ -431,7 +473,8 @@ function initProxyManager() {
                     uri,
                     mode,
                     custom_domains: customDomains,
-                    custom_ips: []
+                    custom_ips: [],
+                    enabled: proxyMasterEnable ? proxyMasterEnable.checked : true
                 })
             });
             const data = await res.json();
@@ -751,7 +794,7 @@ function initWifiManager() {
             if (document.getElementById("wifi2-sec")) document.getElementById("wifi2-sec").value = cfg.wifi_2g_security || "WPA2PSK";
             if (document.getElementById("wifi2-mode")) document.getElementById("wifi2-mode").value = cfg.wifi_2g_mode || "11bgn";
             if (document.getElementById("wifi2-chan")) document.getElementById("wifi2-chan").value = cfg.wifi_2g_channel || 0;
-            if (document.getElementById("wifi2-bw")) document.getElementById("wifi2-bw").value = cfg.wifi_2g_bandwidth || 40;
+            if (document.getElementById("wifi2-bw")) document.getElementById("wifi2-bw").value = cfg.wifi_2g_bandwidth !== undefined ? cfg.wifi_2g_bandwidth : 0;
             if (document.getElementById("wifi2-pwr")) document.getElementById("wifi2-pwr").value = cfg.wifi_2g_tx_power || 100;
             if (document.getElementById("wifi2-pmf")) document.getElementById("wifi2-pmf").value = cfg.wifi_2g_pmf !== undefined ? cfg.wifi_2g_pmf : 1;
             if (document.getElementById("wifi2-sgi")) document.getElementById("wifi2-sgi").checked = !!cfg.wifi_2g_short_gi;
@@ -764,7 +807,7 @@ function initWifiManager() {
             if (document.getElementById("wifi5-sec")) document.getElementById("wifi5-sec").value = cfg.wifi_5g_security || "WPA2PSK";
             if (document.getElementById("wifi5-mode")) document.getElementById("wifi5-mode").value = cfg.wifi_5g_mode || "11vht_ac";
             if (document.getElementById("wifi5-chan")) document.getElementById("wifi5-chan").value = cfg.wifi_5g_channel || 36;
-            if (document.getElementById("wifi5-bw")) document.getElementById("wifi5-bw").value = cfg.wifi_5g_bandwidth || 80;
+            if (document.getElementById("wifi5-bw")) document.getElementById("wifi5-bw").value = cfg.wifi_5g_bandwidth !== undefined ? cfg.wifi_5g_bandwidth : 0;
             if (document.getElementById("wifi5-pwr")) document.getElementById("wifi5-pwr").value = cfg.wifi_5g_tx_power || 100;
             if (document.getElementById("wifi5-pmf")) document.getElementById("wifi5-pmf").value = cfg.wifi_5g_pmf !== undefined ? cfg.wifi_5g_pmf : 1;
             if (document.getElementById("wifi5-sgi")) document.getElementById("wifi5-sgi").checked = !!cfg.wifi_5g_short_gi;
@@ -2292,3 +2335,19 @@ function initFirmwareUpgrade() {
         }
     });
 }
+
+// Global Show/Hide Password Toggle
+document.addEventListener("click", (e) => {
+    const btn = e.target.closest(".btn-toggle-password");
+    if (!btn) return;
+    const targetId = btn.getAttribute("data-target");
+    const input = document.getElementById(targetId);
+    if (!input) return;
+    if (input.type === "password") {
+        input.type = "text";
+        btn.textContent = "🙈";
+    } else {
+        input.type = "password";
+        btn.textContent = "👁️";
+    }
+});

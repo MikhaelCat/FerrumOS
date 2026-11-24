@@ -1,9 +1,19 @@
 #!/bin/sh
 # FerrumOS Zapret NFQWS DPI Circumvention Service
 # Restores YouTube 4K playback and Discord voice/media in Russia without VPN
+# Ensures zero packet loss and preserves all QUIC/UDP (Hysteria 2 / TUIC) traffic
 
 NFQWS="/usr/bin/nfqws"
 QNUM=200
+
+flush_zapret_rules() {
+    # Thoroughly flush all duplicate rules until iptables -D returns non-zero
+    while iptables -t mangle -D POSTROUTING -p udp --dport 443 -j DROP 2>/dev/null; do :; done
+    while iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null; do :; done
+    while iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM 2>/dev/null; do :; done
+    while iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null; do :; done
+    while iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM 2>/dev/null; do :; done
+}
 
 start_zapret() {
     echo "[FerrumOS] Starting Zapret NFQWS DPI bypass..."
@@ -11,14 +21,12 @@ start_zapret() {
     # Ensure NFQUEUE kernel module is loaded
     modprobe xt_NFQUEUE 2>/dev/null || true
 
-    # Clean old iptables rules
-    iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null || true
-    iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM 2>/dev/null || true
-    iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null || true
-    iptables -t mangle -D POSTROUTING -p udp --dport 443 -j DROP 2>/dev/null || true
+    # Clean old iptables rules to prevent duplicate entries
+    flush_zapret_rules
 
     # YouTube 4K & HTTPS bypass: Send initial TLS/HTTP packets to NFQUEUE with --queue-bypass
     # CRITICAL: --queue-bypass guarantees that packets are NEVER dropped even if nfqws is busy or restarting!
+    # NOTE: UDP 443 (QUIC / Hysteria 2) is NEVER blocked, guaranteeing high-speed UDP tunnels for phones & PCs.
     iptables -t mangle -A POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass
     
     # Discord Voice UDP (Voice IP Discovery)
@@ -40,10 +48,7 @@ start_zapret() {
 stop_zapret() {
     echo "[FerrumOS] Stopping Zapret..."
     killall nfqws 2>/dev/null || true
-    iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null || true
-    iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM 2>/dev/null || true
-    iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null || true
-    iptables -t mangle -D POSTROUTING -p udp --dport 443 -j DROP 2>/dev/null || true
+    flush_zapret_rules
 }
 
 case "$1" in

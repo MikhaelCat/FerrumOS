@@ -867,3 +867,42 @@ input:checked + .slider:before {
 .rounded {
     border-radius: 8px;
 }
+
+/* Password Visibility Toggle */
+.password-toggle-wrapper {
+    position: relative;
+    display: flex;
+    align-items: center;
+    width: 100%;
+}
+
+.password-toggle-wrapper input {
+    width: 100%;
+    padding-right: 44px;
+}
+
+.btn-toggle-password {
+    position: absolute;
+    right: 6px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: transparent;
+    border: none;
+    cursor: pointer;
+    font-size: 1.1rem;
+    line-height: 1;
+    color: var(--text-muted, #94a3b8);
+    padding: 6px 8px;
+    border-radius: 4px;
+    transition: color 0.15s, background-color 0.15s;
+    user-select: none;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.btn-toggle-password:hover {
+    color: #f8fafc;
+    background: rgba(255, 255, 255, 0.08);
+}
+

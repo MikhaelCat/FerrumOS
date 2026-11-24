@@ -153,7 +153,7 @@ impl Default for WifiConfig {
             wifi_2g_security: "WPA2PSK".into(),
             wifi_2g_mode: "11bgn".into(),
             wifi_2g_channel: 6,
-            wifi_2g_bandwidth: 40,
+            wifi_2g_bandwidth: 0,
             wifi_2g_tx_power: 100,
             wifi_2g_short_gi: true,
             wifi_2g_isolate: false,
@@ -168,7 +168,7 @@ impl Default for WifiConfig {
             wifi_5g_security: "WPA2PSK".into(),
             wifi_5g_mode: "11vht_ac".into(),
             wifi_5g_channel: 36,
-            wifi_5g_bandwidth: 80,
+            wifi_5g_bandwidth: 0,
             wifi_5g_tx_power: 100,
             wifi_5g_short_gi: true,
             wifi_5g_isolate: false,
@@ -497,7 +497,11 @@ pub fn get_dhcp_leases() -> Vec<DhcpLeaseEntry> {
 /// Includes WMM, A-MPDU aggregation, Short GI, STBC/LDPC, beamforming, and roaming.
 pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
     // 1. Generate 2.4 GHz Configuration (/etc/Wireless/RT2860/RT2860AP.dat)
-    let ht_bw_2g = if cfg.wifi_2g_bandwidth >= 40 { 1 } else { 0 };
+    let (ht_bw_2g, bss_coex_2g) = match cfg.wifi_2g_bandwidth {
+        20 => (0, 0), // 20 MHz only
+        40 => (1, 0), // 40 MHz fixed
+        _ => (1, 1),  // 0 (or default): 20/40 MHz Auto / Mixed (HT_BW=1, HT_BSSCoexistence=1)
+    };
     let ht_extcha_2g = if cfg.wifi_2g_channel <= 7 { 1 } else { 0 };
     let gi_2g = if cfg.wifi_2g_short_gi { 1 } else { 0 };
     let isolate_2g = if cfg.wifi_2g_isolate { 1 } else { 0 };
@@ -577,7 +581,7 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         HT_RDG=1\n\
         HT_EXTCHA={extcha}\n\
         HT_BW={bw}\n\
-        HT_BSSCoexistence=0\n\
+        HT_BSSCoexistence={bss_coex}\n\
         HT_AutoBA=1\n\
         HT_AMSDU=0\n\
         HT_BAWinSize=64\n\
@@ -622,6 +626,7 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         hide = hide_2g,
         extcha = ht_extcha_2g,
         bw = ht_bw_2g,
+        bss_coex = bss_coex_2g,
         gi = gi_2g,
         dot11k = if cfg.fast_roaming_80211k { 1 } else { 0 },
         dot11v = if cfg.fast_roaming_80211v { 1 } else { 0 },
@@ -637,10 +642,11 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
     let _ = fs::write("/etc/Wireless/RT2860/RT2860AP.dat", dat_2g);
 
     // 2. Generate 5 GHz Configuration (/etc/Wireless/iNIC/iNIC_ap.dat)
-    let vht_bw_5g = match cfg.wifi_5g_bandwidth {
-        80 => 1, // VHT 80 MHz
-        40 => 0, // HT/VHT 40 MHz
-        _ => 0,  // 20 MHz
+    let (ht_bw_5g, vht_bw_5g) = match cfg.wifi_5g_bandwidth {
+        20 => (0, 0), // 20 MHz fixed
+        40 => (1, 0), // 20/40 MHz mixed (HT40/VHT40)
+        80 => (1, 1), // 80 MHz fixed (VHT80)
+        _ => (1, 1),  // 0 (or default): 20/40/80 MHz Auto / Mixed (VHT80)
     };
     let gi_5g = if cfg.wifi_5g_short_gi { 1 } else { 0 };
     let isolate_5g = if cfg.wifi_5g_isolate { 1 } else { 0 };
@@ -675,7 +681,7 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         NoForwardingBTNBSSID={iso_guest}\n\
         HideSSID={hide};0\n\
         HT_EXTCHA=1\n\
-        HT_BW=1\n\
+        HT_BW={ht_bw}\n\
         HT_AutoBA=1\n\
         HT_BAWinSize=64\n\
         HT_GI={gi}\n\
@@ -716,6 +722,7 @@ pub fn apply_wifi_config(cfg: &WifiConfig) -> Result<(), String> {
         iso = isolate_5g,
         iso_guest = if cfg.guest_isolate_lan { 1 } else { 0 },
         hide = hide_5g,
+        ht_bw = ht_bw_5g,
         vht_bw = vht_bw_5g,
         gi = gi_5g,
         txbf = if cfg.wifi_5g_beamforming { 1 } else { 0 },

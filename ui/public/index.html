@@ -525,7 +525,10 @@
                             </div>
                             <div class="form-group mb-2">
                                 <label>Пароль беспроводной сети:</label>
-                                <input type="password" id="wifi2-pass" class="form-control" value="ChangeMe123">
+                                <div class="password-toggle-wrapper">
+                                    <input type="password" id="wifi2-pass" class="form-control" value="ChangeMe123">
+                                    <button type="button" class="btn-toggle-password" data-target="wifi2-pass" title="Показать/скрыть пароль" aria-label="Показать/скрыть пароль">👁️</button>
+                                </div>
                             </div>
                             <div class="grid grid-2 mb-2">
                                 <div class="form-group">
@@ -568,8 +571,9 @@
                                 <div class="form-group">
                                     <label>Ширина канала:</label>
                                     <select id="wifi2-bw" class="form-control">
-                                        <option value="40" selected>20/40 MHz (HT40)</option>
-                                        <option value="20">20 MHz (HT20)</option>
+                                        <option value="0" selected>20/40 MHz (Авто / Смешанный HT20/40)</option>
+                                        <option value="20">20 MHz (Фиксированный HT20)</option>
+                                        <option value="40">40 MHz (Фиксированный HT40)</option>
                                     </select>
                                 </div>
                             </div>
@@ -619,7 +623,10 @@
                             </div>
                             <div class="form-group mb-2">
                                 <label>Пароль беспроводной сети:</label>
-                                <input type="password" id="wifi5-pass" class="form-control" value="ChangeMe123">
+                                <div class="password-toggle-wrapper">
+                                    <input type="password" id="wifi5-pass" class="form-control" value="ChangeMe123">
+                                    <button type="button" class="btn-toggle-password" data-target="wifi5-pass" title="Показать/скрыть пароль" aria-label="Показать/скрыть пароль">👁️</button>
+                                </div>
                             </div>
                             <div class="grid grid-2 mb-2">
                                 <div class="form-group">
@@ -661,9 +668,10 @@
                                 <div class="form-group">
                                     <label>Ширина канала:</label>
                                     <select id="wifi5-bw" class="form-control">
-                                        <option value="80" selected>80 MHz (VHT80 - Макс. 433 Мбит/с)</option>
-                                        <option value="40">40 MHz (VHT40)</option>
-                                        <option value="20">20 MHz (VHT20)</option>
+                                        <option value="0" selected>20/40/80 MHz (Авто / Смешанный VHT80)</option>
+                                        <option value="40">20/40 MHz (Смешанный VHT40)</option>
+                                        <option value="80">80 MHz (Фиксированный VHT80)</option>
+                                        <option value="20">20 MHz (Фиксированный VHT20)</option>
                                     </select>
                                 </div>
                             </div>
@@ -776,7 +784,10 @@
                             </div>
                             <div class="form-group">
                                 <label>Пароль:</label>
-                                <input type="password" id="guest-pass" class="form-control" value="GuestPassword123">
+                                <div class="password-toggle-wrapper">
+                                    <input type="password" id="guest-pass" class="form-control" value="GuestPassword123">
+                                    <button type="button" class="btn-toggle-password" data-target="guest-pass" title="Показать/скрыть пароль" aria-label="Показать/скрыть пароль">👁️</button>
+                                </div>
                             </div>
                             <div class="form-group">
                                 <label>Ограничение скорости (Мбит/с):</label>
@@ -1104,7 +1115,10 @@
                             </div>
                             <div class="form-group">
                                 <label>Пароль PPPoE:</label>
-                                <input type="password" id="wan-pppoe-pass" class="form-control" placeholder="••••••••">
+                                <div class="password-toggle-wrapper">
+                                    <input type="password" id="wan-pppoe-pass" class="form-control" placeholder="••••••••">
+                                    <button type="button" class="btn-toggle-password" data-target="wan-pppoe-pass" title="Показать/скрыть пароль" aria-label="Показать/скрыть пароль">👁️</button>
+                                </div>
                             </div>
                             <div class="form-group">
                                 <label>Имя службы / Концентратора (необязательно):</label>
@@ -1587,7 +1601,10 @@
                             </div>
                             <div class="form-group">
                                 <label>Токен / Секретный ключ:</label>
-                                <input type="password" id="ddns-token" class="form-control" placeholder="••••••••••••••••">
+                                <div class="password-toggle-wrapper">
+                                    <input type="password" id="ddns-token" class="form-control" placeholder="••••••••••••••••">
+                                    <button type="button" class="btn-toggle-password" data-target="ddns-token" title="Показать/скрыть пароль" aria-label="Показать/скрыть пароль">👁️</button>
+                                </div>
                             </div>
                         </div>
                         <div class="flex-gap">
@@ -1716,15 +1733,24 @@
                             <div class="grid grid-3 mb-3">
                                 <div class="form-group">
                                     <label>Текущий пароль:</label>
-                                    <input type="password" id="pw-old" class="form-control" placeholder="Текущий пароль (root)" required>
+                                    <div class="password-toggle-wrapper">
+                                        <input type="password" id="pw-old" class="form-control" placeholder="Текущий пароль (root)" required>
+                                        <button type="button" class="btn-toggle-password" data-target="pw-old" title="Показать/скрыть пароль" aria-label="Показать/скрыть пароль">👁️</button>
+                                    </div>
                                 </div>
                                 <div class="form-group">
                                     <label>Новый пароль:</label>
-                                    <input type="password" id="pw-new" class="form-control" placeholder="Минимум 3 символа" required>
+                                    <div class="password-toggle-wrapper">
+                                        <input type="password" id="pw-new" class="form-control" placeholder="Минимум 3 символа" required>
+                                        <button type="button" class="btn-toggle-password" data-target="pw-new" title="Показать/скрыть пароль" aria-label="Показать/скрыть пароль">👁️</button>
+                                    </div>
                                 </div>
                                 <div class="form-group">
                                     <label>Подтверждение нового пароля:</label>
-                                    <input type="password" id="pw-confirm" class="form-control" placeholder="Повторите пароль" required>
+                                    <div class="password-toggle-wrapper">
+                                        <input type="password" id="pw-confirm" class="form-control" placeholder="Повторите пароль" required>
+                                        <button type="button" class="btn-toggle-password" data-target="pw-confirm" title="Показать/скрыть пароль" aria-label="Показать/скрыть пароль">👁️</button>
+                                    </div>
                                 </div>
                             </div>
                             <div class="flex-gap">
@@ -1822,7 +1848,10 @@
                     </div>
                     <div class="form-group mb-3">
                         <label for="login-password">Пароль:</label>
-                        <input type="password" id="login-password" class="form-control" placeholder="root" required autocomplete="current-password">
+                        <div class="password-toggle-wrapper">
+                            <input type="password" id="login-password" class="form-control" placeholder="root" required autocomplete="current-password">
+                            <button type="button" class="btn-toggle-password" data-target="login-password" title="Показать/скрыть пароль" aria-label="Показать/скрыть пароль">👁️</button>
+                        </div>
                     </div>
                     <div id="login-error" class="text-xs text-rose mb-3 d-none">Неверный логин или пароль. По умолчанию: root / root</div>
                     <button type="submit" class="btn btn-primary" style="width:100%;" id="btn-login-submit">Войти</button>

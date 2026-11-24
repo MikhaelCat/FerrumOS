@@ -54,8 +54,8 @@ fn test_auth_state_and_token_generation() {
     // Initially no tokens
     assert_eq!(state.auth_tokens.lock().unwrap().len(), 0);
 
-    // Default proxy is enabled
-    assert!(*state.proxy_enabled.lock().unwrap());
+    // Default proxy is disabled when no user config exists
+    assert!(!*state.proxy_enabled.lock().unwrap());
 
     // Default zapret strategy is 2
     assert_eq!(state.zapret_config.lock().unwrap().strategy, 2);

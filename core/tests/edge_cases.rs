@@ -240,3 +240,52 @@ fn test_firmware_header_validation_edge_cases() {
     let is_valid = invalid_header[0..4] == [0x27, 0x05, 0x19, 0x56] || invalid_header[0..4] == [0x48, 0x44, 0x52, 0x30];
     assert!(!is_valid, "Raw ELF binaries must not be accepted as firmware images");
 }
+
+#[test]
+fn test_proxy_user_state_persistence_and_restore() {
+    use ferrum_core::api::ProxyUserState;
+    use ferrum_core::singbox::RoutingMode;
+    use ferrum_core::parser::parse_proxy_uri;
+
+    let test_uri = "vless://7c1cae68-c2f2-4f79-9cdf-feae294fe5e7@45.143.203.7:443?encryption=none&security=tls&alpn=h2,http/1.1&fp=chrome&packetEncoding=xudp#test";
+    let state = ProxyUserState {
+        uri: test_uri.to_string(),
+        mode: RoutingMode::SmartRu,
+        custom_domains: vec!["custom.org".into(), "blocked.com".into()],
+        custom_ips: vec!["1.2.3.4/32".into()],
+        enabled: true,
+    };
+
+    let json_str = serde_json::to_string(&state).unwrap();
+    let deserialized: ProxyUserState = serde_json::from_str(&json_str).unwrap();
+
+    assert_eq!(deserialized.uri, test_uri);
+    assert_eq!(deserialized.mode, RoutingMode::SmartRu);
+    assert_eq!(deserialized.custom_domains.len(), 2);
+    assert!(deserialized.enabled);
+
+    let parsed = parse_proxy_uri(&deserialized.uri);
+    assert!(parsed.is_ok());
+    let cfg = parsed.unwrap();
+    assert_eq!(cfg.server, "45.143.203.7");
+    assert_eq!(cfg.server_port, 443);
+}
+
+#[test]
+fn test_wifi_bandwidth_mixed_modes() {
+    use ferrum_core::network::{WifiConfig, apply_wifi_config};
+
+    let mut cfg = WifiConfig::default();
+    assert_eq!(cfg.wifi_2g_bandwidth, 0); // 0 = 20/40 MHz Mixed
+    assert_eq!(cfg.wifi_5g_bandwidth, 0); // 0 = 20/40/80 MHz Mixed
+    assert!(apply_wifi_config(&cfg).is_ok());
+
+    // Test specific fixed bandwidths
+    cfg.wifi_2g_bandwidth = 20;
+    cfg.wifi_5g_bandwidth = 40;
+    assert!(apply_wifi_config(&cfg).is_ok());
+
+    cfg.wifi_2g_bandwidth = 40;
+    cfg.wifi_5g_bandwidth = 80;
+    assert!(apply_wifi_config(&cfg).is_ok());
+}
