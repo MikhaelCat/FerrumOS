@@ -341,7 +341,7 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             let _ = request.respond(resp);
         }
         (Method::Get, "/app.js") | (Method::Head, "/app.js") => {
-            let cache_header = Header::from_bytes(&b"Cache-Control"[..], &b"public, max-age=604800, immutable"[..]).unwrap();
+            let cache_header = Header::from_bytes(&b"Cache-Control"[..], &b"no-cache, no-store, must-revalidate"[..]).unwrap();
             let resp = Response::from_string(APP_JS)
                 .with_header(content_type_js)
                 .with_header(sec_xfo)
@@ -350,7 +350,7 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             let _ = request.respond(resp);
         }
         (Method::Get, "/app.css") | (Method::Head, "/app.css") => {
-            let cache_header = Header::from_bytes(&b"Cache-Control"[..], &b"public, max-age=604800, immutable"[..]).unwrap();
+            let cache_header = Header::from_bytes(&b"Cache-Control"[..], &b"no-cache, no-store, must-revalidate"[..]).unwrap();
             let resp = Response::from_string(APP_CSS)
                 .with_header(content_type_css)
                 .with_header(sec_xfo)

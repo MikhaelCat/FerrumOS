@@ -8,11 +8,17 @@ QNUM=200
 
 flush_zapret_rules() {
     # Thoroughly flush all duplicate rules until iptables -D returns non-zero
+    while iptables -D FORWARD -p udp --dport 443 -j REJECT --reject-with icmp-port-unreachable 2>/dev/null; do :; done
+    while iptables -D FORWARD -p udp --dport 443 -j DROP 2>/dev/null; do :; done
     while iptables -t mangle -D POSTROUTING -p udp --dport 443 -j DROP 2>/dev/null; do :; done
     while iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null; do :; done
     while iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM 2>/dev/null; do :; done
+    while iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -j ZAPRET_NFQ 2>/dev/null; do :; done
+    while iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j ZAPRET_NFQ 2>/dev/null; do :; done
     while iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null; do :; done
     while iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM 2>/dev/null; do :; done
+    iptables -t mangle -F ZAPRET_NFQ 2>/dev/null || true
+    iptables -t mangle -X ZAPRET_NFQ 2>/dev/null || true
 }
 
 start_zapret() {

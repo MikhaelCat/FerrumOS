@@ -336,7 +336,7 @@ function initProxyManager() {
             }
 
             // Restore saved URI, parsed config, and mode upon refresh
-            if (data.raw_uri && uriInput && !uriInput.value) {
+            if (data.raw_uri && uriInput) {
                 uriInput.value = data.raw_uri;
             }
             if (data.current_proxy) {
@@ -353,7 +353,7 @@ function initProxyManager() {
             }
             if (data.custom_domains && data.custom_domains.length > 0) {
                 const domInput = document.getElementById("custom-domains-input");
-                if (domInput && !domInput.value) {
+                if (domInput) {
                     domInput.value = data.custom_domains.join("\n");
                 }
             }

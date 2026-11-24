@@ -60,6 +60,13 @@ sed -i '/mount -t tmpfs tmpfs \/etc/a \ln -sf /etc_ro/init.d /etc/init.d\n/etc/i
 # Ensure mtd_storage.sh starts SSH and zapret in default started_script.sh
 sed -i 's|/usr/bin/run_zapret.sh start &|/etc/init.d/S15ssh start \&\n/etc/init.d/S30zapret start \&|g' "${WORK_DIR}/romfs/sbin/mtd_storage.sh"
 
+# Neutralize legacy run_zapret.sh so rc / started_script never injects UDP 443 REJECT
+cat << 'EOF' > "${WORK_DIR}/romfs/usr/bin/run_zapret.sh"
+#!/bin/sh
+exec /etc/init.d/S30zapret "$@"
+EOF
+chmod +x "${WORK_DIR}/romfs/usr/bin/run_zapret.sh"
+
 echo "[4/5] Packing SquashFS XZ rootfs..."
 RAMDISK="${WORK_DIR}/ramdisk"
 rm -f "${RAMDISK}"
