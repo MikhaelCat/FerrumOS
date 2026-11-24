@@ -94,17 +94,17 @@ pub fn build_nfqws_command(config: &ZapretConfig) -> Vec<String> {
     }
 
     match config.strategy {
-        // Preset 1: General Multi-Split (универсальный split2 + badseq + badsum)
+        // Preset 1: Universal TSPU Multisplit (YouTube 4K + Web Browsing)
         1 => vec![
             "--qnum=200".into(),
-            "--dpi-desync=split2".into(),
-            "--dpi-desync-split-pos=2".into(),
-            "--dpi-desync-fooling=badseq,badsum".into(),
+            "--dpi-desync=fake,multisplit".into(),
+            "--dpi-desync-split-pos=1,midsld".into(),
+            "--dpi-desync-fooling=badseq".into(),
             "--dpi-desync-cutoff=d4".into(),
             "--dpi-desync-repeats=2".into(),
             "--dpi-desync-any-protocol".into(),
         ],
-        // Preset 2: Fake TLS SNI (Russian TSPU Evasion - фейковый ClientHello)
+        // Preset 2: Fake TLS SNI (ClientHello desync)
         2 => vec![
             "--qnum=200".into(),
             "--dpi-desync=fake,split2".into(),
@@ -114,7 +114,7 @@ pub fn build_nfqws_command(config: &ZapretConfig) -> Vec<String> {
             "--dpi-desync-repeats=2".into(),
             "--dpi-desync-any-protocol".into(),
         ],
-        // Preset 3: Disorder + Badsum (Ростелеком / Мегафон)
+        // Preset 3: Disorder2 + Badsum (Ростелеком, Мегафон, МТС)
         3 => vec![
             "--qnum=200".into(),
             "--dpi-desync=disorder2".into(),
@@ -124,7 +124,7 @@ pub fn build_nfqws_command(config: &ZapretConfig) -> Vec<String> {
             "--dpi-desync-cutoff=d4".into(),
             "--dpi-desync-any-protocol".into(),
         ],
-        // Preset 4: Discord WebRTC UDP + YouTube 4K GGC (мультисплит + md5sig)
+        // Preset 4: Discord WebRTC UDP + YouTube 4K (мультисплит + md5sig)
         4 => vec![
             "--qnum=200".into(),
             "--dpi-desync=fake,multisplit".into(),
@@ -145,8 +145,8 @@ pub fn build_nfqws_command(config: &ZapretConfig) -> Vec<String> {
         // Fallback default
         _ => vec![
             "--qnum=200".into(),
-            "--dpi-desync=fake,split2".into(),
-            "--dpi-desync-split-pos=1".into(),
+            "--dpi-desync=fake,multisplit".into(),
+            "--dpi-desync-split-pos=1,midsld".into(),
             "--dpi-desync-fooling=badseq".into(),
             "--dpi-desync-cutoff=d4".into(),
             "--dpi-desync-repeats=2".into(),

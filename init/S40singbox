@@ -4,6 +4,7 @@
 
 CONFIG="/etc/sing-box/config.json"
 BIN="/usr/bin/sing-box"
+[ -x /tmp/sing-box ] && BIN="/tmp/sing-box"
 PIDFILE="/var/run/sing-box.pid"
 
 start_singbox() {
@@ -12,15 +13,18 @@ start_singbox() {
         exit 0
     fi
 
+    if [ ! -x "$BIN" ]; then
+        echo "[FerrumOS] Sing-Box binary not found at $BIN. Cannot start tunnel."
+        exit 1
+    fi
+
     echo "[FerrumOS] Starting Sing-Box tunnel daemon..."
 
     # Ensure tun kernel module is loaded
     modprobe tun 2>/dev/null || true
 
-    # Policy Routing setup:
-    # Table 100 for tun0 default route
+    # Clean old routing table 100
     ip route flush table 100 2>/dev/null || true
-    ip rule del fwmark 0x100/0x100 table 100 2>/dev/null || true
 
     # Run sing-box in background
     $BIN run -c "$CONFIG" > /var/log/sing-box.log 2>&1 &

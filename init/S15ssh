@@ -30,7 +30,7 @@ start_sshd() {
         chmod 600 "$RSA_KEY" 2>/dev/null || true
     fi
 
-    # Start Dropbear
+    # Start Dropbear SSH
     if ! pidof dropbear >/dev/null 2>&1; then
         if [ -f "$RSA_KEY" ]; then
             /usr/sbin/dropbear -r "$RSA_KEY" -p 22
@@ -38,6 +38,12 @@ start_sshd() {
             /usr/sbin/dropbear -p 22
         fi
         echo "[FerrumOS] Dropbear SSH running on port 22 (login: root / pass: root)."
+    fi
+
+    # Start Telnet fallback daemon for emergency console recovery
+    if ! pidof telnetd >/dev/null 2>&1; then
+        telnetd
+        echo "[FerrumOS] Telnet daemon active on port 23."
     fi
 }
 

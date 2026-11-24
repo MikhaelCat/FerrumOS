@@ -12,16 +12,20 @@ start_zapret() {
     modprobe xt_NFQUEUE 2>/dev/null || true
 
     # Clean old iptables rules
+    iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null || true
     iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM 2>/dev/null || true
+    iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null || true
     iptables -t mangle -D POSTROUTING -p udp --dport 443 -j DROP 2>/dev/null || true
 
-    # YouTube 4K & HTTPS bypass: Send initial TLS packets to NFQUEUE
-    iptables -t mangle -A POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM
-    # Block QUIC/HTTP3 to force YouTube to use HTTP/2 with NFQWS desync
-    iptables -t mangle -A POSTROUTING -p udp --dport 443 -j DROP
+    # YouTube 4K & HTTPS bypass: Send initial TLS/HTTP packets to NFQUEUE with --queue-bypass
+    # CRITICAL: --queue-bypass guarantees that packets are NEVER dropped even if nfqws is busy or restarting!
+    iptables -t mangle -A POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass
+    
+    # Discord Voice UDP (Voice IP Discovery)
+    iptables -t mangle -A POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null || true
 
     # Launch nfqws with selected strategy preset (or custom args)
-    ARGS="--qnum=$QNUM --dpi-desync=split2 --dpi-desync-split-pos=1 --dpi-desync-fooling=badseq --dpi-desync-cutoff=d4 --dpi-desync-repeats=2 --dpi-desync-any-protocol"
+    ARGS="--qnum=$QNUM --dpi-desync=fake,multisplit --dpi-desync-split-pos=1,midsld --dpi-desync-fooling=badseq --dpi-desync-cutoff=d4 --dpi-desync-repeats=2 --dpi-desync-any-protocol"
     if [ -f /etc/zapret/nfqws.args ]; then
         ARGS="$(cat /etc/zapret/nfqws.args)"
     elif [ -f /etc/storage/zapret/nfqws.args ]; then
@@ -36,7 +40,9 @@ start_zapret() {
 stop_zapret() {
     echo "[FerrumOS] Stopping Zapret..."
     killall nfqws 2>/dev/null || true
+    iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null || true
     iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM 2>/dev/null || true
+    iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null || true
     iptables -t mangle -D POSTROUTING -p udp --dport 443 -j DROP 2>/dev/null || true
 }
 

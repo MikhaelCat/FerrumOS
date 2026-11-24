@@ -25,7 +25,7 @@ echo "  FerrumOS Firmware Packaging: NAG SNR-CPE-MD1.1 (MT7620) "
 echo "=========================================================="
 
 # Ensure ferrum-core binary is built
-if [ ! -f "${ROOT_DIR}/bin/ferrum-core-packed" ]; then
+if [ ! -f "${ROOT_DIR}/bin/ferrum-core" ]; then
     echo "[1/5] Building ferrum-core MIPS binary..."
     make -C "${ROOT_DIR}" build-mips
 fi
@@ -34,10 +34,10 @@ echo "[2/5] Preparing rootfs staging area..."
 rm -rf "${WORK_DIR}/romfs"
 cp -a "${PADAVAN_ROOT}/romfs" "${WORK_DIR}/romfs"
 
-# Install Ferrum-Core binary
+# Install Ferrum-Core binary (unpacked, safe for MIPS Linux 3.4)
 echo "[3/5] Installing Ferrum-Core Rust daemon, symlinks, and init services..."
 mkdir -p "${WORK_DIR}/romfs/usr/bin" "${WORK_DIR}/romfs/etc_ro/init.d"
-cp "${ROOT_DIR}/bin/ferrum-core-packed" "${WORK_DIR}/romfs/usr/bin/ferrum-core"
+cp "${ROOT_DIR}/bin/ferrum-core" "${WORK_DIR}/romfs/usr/bin/ferrum-core"
 chmod +x "${WORK_DIR}/romfs/usr/bin/ferrum-core"
 
 # Replace legacy C httpd with ferrum-core so Padavan rc starts Ferrum-Core on port 80

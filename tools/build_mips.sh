@@ -32,11 +32,9 @@ echo "[2/3] Checking binary properties..."
 file "${DEST_BIN}"
 ls -lh "${DEST_BIN}"
 
-if command -v upx >/dev/null 2>&1; then
-    echo "[3/3] Compressing binary with UPX..."
-    upx -9 --force-overwrite -o "${OUT_DIR}/ferrum-core-packed" "${DEST_BIN}" || true
-    ls -lh "${OUT_DIR}/ferrum-core-packed"
-fi
+# Note: Do NOT use UPX on MIPS (MT7620/Linux 3.4).
+# UPX decompressor stubs cause cache incoherency and SIGTRAP (Trace/breakpoint trap) on MIPS 24KEc.
+# SquashFS-XZ handles rootfs-level transparent compression natively and safely.
 
 echo "=========================================================="
 echo "  Build completed successfully! Output: ${OUT_DIR}         "

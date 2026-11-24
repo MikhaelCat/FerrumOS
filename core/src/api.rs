@@ -208,8 +208,19 @@ struct GenericResp {
 struct ProxyStatusResp {
     active: bool,
     enabled: bool,
+    running: bool,
+    core_installed: bool,
     mode: RoutingMode,
     current_proxy: Option<ProxyConfig>,
+    status_text: String,
+}
+
+#[derive(Serialize)]
+struct FirmwareUploadResp {
+    success: bool,
+    message: String,
+    file_size: usize,
+    valid_header: bool,
 }
 
 #[derive(Deserialize)]
@@ -973,11 +984,35 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             let proxy = state.proxy_config.lock().unwrap().clone();
             let mode = state.routing_mode.lock().unwrap().clone();
             let enabled = *state.proxy_enabled.lock().unwrap();
+            let core_installed = std::path::Path::new("/usr/bin/sing-box").exists() || std::path::Path::new("/tmp/sing-box").exists();
+            let running = if core_installed {
+                std::process::Command::new("pidof")
+                    .arg("sing-box")
+                    .output()
+                    .map(|o| o.status.success() && !o.stdout.is_empty())
+                    .unwrap_or(false)
+            } else {
+                false
+            };
+
+            let status_text = if !core_installed && enabled {
+                "Ядро Sing-Box не установлено во Flash (лимит 8 МБ). Доступна загрузка в RAM (/tmp) или USB".into()
+            } else if !running && enabled {
+                "Служба Sing-Box остановлена".into()
+            } else if running && enabled {
+                "Туннель активен (Подключено)".into()
+            } else {
+                "Туннель отключен".into()
+            };
+
             let resp = ProxyStatusResp {
-                active: proxy.is_some() && enabled,
+                active: running && enabled,
                 enabled,
+                running,
+                core_installed,
                 mode,
                 current_proxy: proxy,
+                status_text,
             };
             respond_json(request, &resp, cors_header, content_type_json);
         }
@@ -1065,6 +1100,98 @@ pub fn handle_request(mut request: Request, state: &AppState) {
         (Method::Post, "/api/v1/zapret/probe") => {
             let probe_res = probe_zapret_strategies();
             respond_json(request, &probe_res, cors_header, content_type_json);
+        }
+
+        // REST API: Firmware Upload & Pre-flash Validation
+        (Method::Post, "/api/v1/system/firmware/upload") => {
+            let mut body_bytes = Vec::new();
+            let read_res = request.as_reader().read_to_end(&mut body_bytes);
+            if read_res.is_err() || body_bytes.len() < 1_000_000 {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Ошибка передачи: размер файла прошивки слишком мал (< 1 МБ) или поток был прерван.".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+                return;
+            }
+
+            if body_bytes.len() > 8_060_928 {
+                let resp = GenericResp {
+                    success: false,
+                    message: format!("Размер файла ({} байт) превышает допустимый размер MTD-раздела Flash (8,060,928 байт).", body_bytes.len()),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+                return;
+            }
+
+            // Check Magic: uImage (0x27051956) or TRX (0x30524448)
+            let is_uimage = body_bytes.len() >= 4 && body_bytes[0..4] == [0x27, 0x05, 0x19, 0x56];
+            let is_trx = body_bytes.len() >= 4 && body_bytes[0..4] == [0x48, 0x44, 0x52, 0x30];
+
+            if !is_uimage && !is_trx {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Некорректная сигнатура образа. Заголовок не соответствует стандарту uImage/TRX для MediaTek MT7620.".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+                return;
+            }
+
+            let file_size = body_bytes.len();
+            if let Err(e) = std::fs::write("/tmp/firmware_upload.trx", &body_bytes) {
+                let resp = GenericResp {
+                    success: false,
+                    message: format!("Ошибка сохранения во временную память /tmp: {}", e),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+                return;
+            }
+
+            let resp = FirmwareUploadResp {
+                success: true,
+                message: "Образ FerrumOS успешно загружен, проверен и готов к прошивке в SPI Flash.".into(),
+                file_size,
+                valid_header: true,
+            };
+            respond_json(request, &resp, cors_header, content_type_json);
+        }
+
+        // REST API: Firmware Flash Trigger
+        (Method::Post, "/api/v1/system/firmware/flash") => {
+            if !std::path::Path::new("/tmp/firmware_upload.trx").exists() {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Файл прошивки не найден в памяти (/tmp/firmware_upload.trx). Сначала выполните загрузку файла.".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+                return;
+            }
+
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let _ = std::process::Command::new("mtd_write")
+                    .args(["-r", "write", "/tmp/firmware_upload.trx", "Firmware_Stub"])
+                    .output();
+            });
+
+            let resp = GenericResp {
+                success: true,
+                message: "Запущена запись во Flash-память (Firmware_Stub). Роутер автоматически перезагрузится через 30-45 секунд.".into(),
+            };
+            respond_json(request, &resp, cors_header, content_type_json);
+        }
+
+        // REST API: System Reboot
+        (Method::Post, "/api/v1/system/reboot") => {
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                let _ = std::process::Command::new("reboot").output();
+            });
+            let resp = GenericResp {
+                success: true,
+                message: "Команда перезагрузки отправлена. Веб-интерфейс будет доступен через 30-45 секунд.".into(),
+            };
+            respond_json(request, &resp, cors_header, content_type_json);
         }
 
         // Fallback 404

@@ -38,6 +38,7 @@ document.addEventListener("DOMContentLoaded", () => {
     initNetworkManager();
     initToolsManager();
     initSystemManager();
+    initFirmwareUpgrade();
     startStatsPolling();
 });
 
@@ -260,6 +261,57 @@ function initProxyManager() {
     const proxyMasterEnable = document.getElementById("proxy-master-enable");
     const proxyMasterLabel = document.getElementById("proxy-master-label");
 
+    async function syncProxyStatus() {
+        try {
+            const res = await fetch("/api/v1/proxy/status");
+            const data = await res.json();
+            if (!data) return;
+
+            const statusText = document.getElementById("proxy-status-text");
+            const proxyPill = document.getElementById("proxy-pill");
+            const modeBadge = document.getElementById("proxy-active-mode-badge");
+
+            if (modeBadge) {
+                modeBadge.textContent = data.mode === "smart_ru" ? "Smart RU" : data.mode.toUpperCase();
+            }
+
+            if (proxyMasterEnable) {
+                proxyMasterEnable.checked = !!data.enabled;
+                if (proxyMasterLabel) proxyMasterLabel.textContent = data.enabled ? "Включен" : "Отключен";
+            }
+
+            if (data.active && data.running) {
+                if (statusText) statusText.textContent = "Активен (Подключено)";
+                if (proxyPill) {
+                    proxyPill.textContent = "Active";
+                    proxyPill.className = "badge-status status-good";
+                }
+            } else if (data.enabled && !data.core_installed) {
+                if (statusText) statusText.textContent = "Ядро Sing-Box не установлено в Flash (лимит 8 МБ).";
+                if (proxyPill) {
+                    proxyPill.textContent = "Core Missing";
+                    proxyPill.className = "badge-status status-warning";
+                }
+            } else if (data.enabled && !data.running) {
+                if (statusText) statusText.textContent = "Служба Sing-Box остановлена";
+                if (proxyPill) {
+                    proxyPill.textContent = "Stopped";
+                    proxyPill.className = "badge-status status-warning";
+                }
+            } else {
+                if (statusText) statusText.textContent = "Отключен";
+                if (proxyPill) {
+                    proxyPill.textContent = "Inactive";
+                    proxyPill.className = "badge-status status-neutral";
+                }
+            }
+        } catch (err) {
+            console.warn("Proxy status sync error:", err);
+        }
+    }
+
+    syncProxyStatus();
+
     proxyMasterEnable?.addEventListener("change", async (e) => {
         const enabled = e.target.checked;
         if (proxyMasterLabel) proxyMasterLabel.textContent = enabled ? "Включен" : "Отключен";
@@ -269,15 +321,7 @@ function initProxyManager() {
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ enabled })
             });
-            const statusText = document.getElementById("proxy-status-text");
-            const proxyPill = document.getElementById("proxy-pill");
-            if (enabled) {
-                if (statusText) statusText.textContent = "Активен (Подключено)";
-                if (proxyPill) proxyPill.textContent = "Active";
-            } else {
-                if (statusText) statusText.textContent = "Отключен пользователем";
-                if (proxyPill) proxyPill.textContent = "Inactive";
-            }
+            await syncProxyStatus();
         } catch (err) {
             console.warn("Proxy toggle error:", err);
         }
@@ -392,13 +436,11 @@ function initProxyManager() {
             });
             const data = await res.json();
             if (data.success) {
-                setTimedStatus(statusSpan, "Туннель успешно активирован", "success", 3500);
-                document.getElementById("proxy-status-text").textContent = "Активен (Подключено)";
-                document.getElementById("proxy-active-mode-badge").textContent = mode === "smart_ru" ? "Smart RU" : mode.toUpperCase();
-                document.getElementById("proxy-pill").textContent = "Active";
+                setTimedStatus(statusSpan, "Конфигурация туннеля сохранена", "success", 3500);
             } else {
-                setTimedStatus(statusSpan, data.message || "Ошибка запуска туннеля", "error", 4000);
+                setTimedStatus(statusSpan, data.message || "Ошибка применения туннеля", "error", 4000);
             }
+            await syncProxyStatus();
         } catch (e) {
             setTimedStatus(statusSpan, "Ошибка: " + e.message, "error", 4000);
         } finally {
@@ -2083,6 +2125,170 @@ function initSystemManager() {
             if (statusPw) {
                 setTimedStatus(statusPw, "Ошибка: " + err.message, "error", 4000);
             }
+        }
+    });
+}
+
+// ----------------------------------------------------
+// Firmware Upgrade Management (.trx / MTD Flash)
+// ----------------------------------------------------
+function initFirmwareUpgrade() {
+    const fileInput = document.getElementById("fw-file-input");
+    const detailsBox = document.getElementById("fw-file-details");
+    const fwName = document.getElementById("fw-name");
+    const fwSize = document.getElementById("fw-size");
+    const fwCheck = document.getElementById("fw-check");
+    const btnFlash = document.getElementById("btn-flash-fw");
+    const progressWrap = document.getElementById("fw-progress-wrap");
+    const progressBar = document.getElementById("fw-progress-bar");
+    const progressPercent = document.getElementById("fw-progress-percent");
+    const stepLabel = document.getElementById("fw-step-label");
+    const alertBox = document.getElementById("fw-alert");
+    const statusLabel = document.getElementById("fw-action-status");
+
+    let selectedFile = null;
+
+    fileInput?.addEventListener("change", (e) => {
+        const file = e.target.files?.[0];
+        if (!file) {
+            selectedFile = null;
+            if (detailsBox) detailsBox.style.display = "none";
+            if (btnFlash) btnFlash.disabled = true;
+            return;
+        }
+
+        selectedFile = file;
+        const sizeMb = (file.size / (1024 * 1024)).toFixed(2);
+
+        if (fwName) fwName.textContent = file.name;
+        if (fwSize) fwSize.textContent = `${file.size.toLocaleString()} байт (${sizeMb} МБ)`;
+
+        if (alertBox) alertBox.style.display = "none";
+
+        // Pre-validation checks
+        if (file.size > 8060928) {
+            if (fwCheck) {
+                fwCheck.textContent = "Превышен размер MTD Flash (> 7.68 МБ)";
+                fwCheck.className = "text-red";
+            }
+            if (btnFlash) btnFlash.disabled = true;
+            if (alertBox) {
+                alertBox.textContent = `Ошибка: Файл ${file.name} (${sizeMb} МБ) превышает размер доступного MTD-раздела Flash-памяти (7.68 МБ).`;
+                alertBox.style.display = "block";
+            }
+            return;
+        }
+
+        if (file.size < 1000000) {
+            if (fwCheck) {
+                fwCheck.textContent = "Файл слишком мал (< 1 МБ)";
+                fwCheck.className = "text-red";
+            }
+            if (btnFlash) btnFlash.disabled = true;
+            return;
+        }
+
+        if (fwCheck) {
+            fwCheck.textContent = "Готов к прошивке (Размер в норме)";
+            fwCheck.className = "text-green";
+        }
+        if (detailsBox) detailsBox.style.display = "block";
+        if (btnFlash) btnFlash.disabled = false;
+    });
+
+    btnFlash?.addEventListener("click", async () => {
+        if (!selectedFile) return;
+
+        if (!confirm(`Вы действительно хотите прошить образ ${selectedFile.name}?\n\nВнимание: Не отключайте питание роутера во время записи во Flash.`)) {
+            return;
+        }
+
+        btnFlash.disabled = true;
+        if (fileInput) fileInput.disabled = true;
+        if (progressWrap) progressWrap.style.display = "block";
+        if (alertBox) alertBox.style.display = "none";
+
+        try {
+            // Step 1: Uploading binary via XMLHttpRequest for progress monitoring
+            if (stepLabel) stepLabel.textContent = "Этап 1/3: Передача образа в оперативную память роутера...";
+            
+            await new Promise((resolve, reject) => {
+                const xhr = new XMLHttpRequest();
+                xhr.open("POST", "/api/v1/system/firmware/upload", true);
+
+                xhr.upload.onprogress = (evt) => {
+                    if (evt.lengthComputable) {
+                        const pct = Math.round((evt.loaded / evt.total) * 100);
+                        if (progressBar) progressBar.style.width = pct + "%";
+                        if (progressPercent) progressPercent.textContent = pct + "%";
+                    }
+                };
+
+                xhr.onload = () => {
+                    if (xhr.status >= 200 && xhr.status < 300) {
+                        try {
+                            const res = JSON.parse(xhr.responseText);
+                            if (res.success) {
+                                resolve(res);
+                            } else {
+                                reject(new Error(res.message || "Ошибка проверки заголовка прошивки"));
+                            }
+                        } catch (err) {
+                            reject(new Error("Некорректный ответ от роутера"));
+                        }
+                    } else {
+                        reject(new Error(`Ошибка HTTP ${xhr.status}: ${xhr.statusText}`));
+                    }
+                };
+
+                xhr.onerror = () => reject(new Error("Сетевой сбой при передаче файла"));
+                xhr.send(selectedFile);
+            });
+
+            // Step 2: Triggering Flash write
+            if (stepLabel) stepLabel.textContent = "Этап 2/3: Проверка целостности и запуск mtd_write в SPI Flash...";
+            if (progressBar) progressBar.style.width = "100%";
+            if (progressPercent) progressPercent.textContent = "100%";
+
+            const flashRes = await fetch("/api/v1/system/firmware/flash", { method: "POST" });
+            const flashData = await flashRes.json();
+
+            if (!flashData.success) {
+                throw new Error(flashData.message || "Не удалось запустить процесс прошивки");
+            }
+
+            // Step 3: Countdown and Auto-Reconnect
+            let countdown = 45;
+            if (stepLabel) stepLabel.textContent = `Этап 3/3: Запись во Flash! Роутер перезагружается (${countdown} сек)...`;
+            if (statusLabel) statusLabel.textContent = "Пожалуйста, подождите. Веб-панель перезагрузится автоматически.";
+
+            const timer = setInterval(() => {
+                countdown--;
+                if (stepLabel) stepLabel.textContent = `Этап 3/3: Роутер перезагружается... Ожидание (${countdown} сек)`;
+                if (countdown <= 0) {
+                    clearInterval(timer);
+                    if (stepLabel) stepLabel.textContent = "Попытка переподключения к панели управления...";
+                    
+                    const checkInterval = setInterval(async () => {
+                        try {
+                            const ping = await fetch("/httpd_check.htm", { cache: "no-store" });
+                            if (ping.ok) {
+                                clearInterval(checkInterval);
+                                location.reload();
+                            }
+                        } catch (_) {}
+                    }, 2000);
+                }
+            }, 1000);
+
+        } catch (err) {
+            if (alertBox) {
+                alertBox.textContent = "Ошибка обновления: " + err.message;
+                alertBox.style.display = "block";
+            }
+            if (btnFlash) btnFlash.disabled = false;
+            if (fileInput) fileInput.disabled = false;
+            if (stepLabel) stepLabel.textContent = "Ошибка при обновлении прошивки";
         }
     });
 }

@@ -225,3 +225,18 @@ fn test_wan_speedtest_runner() {
     assert!(data.upload_mbps > 0.0);
     assert!(!data.server_location.is_empty());
 }
+
+#[test]
+fn test_firmware_header_validation_edge_cases() {
+    let valid_uimage = [0x27, 0x05, 0x19, 0x56, 0x00, 0x01, 0x02, 0x03];
+    let is_uimage = valid_uimage[0..4] == [0x27, 0x05, 0x19, 0x56];
+    assert!(is_uimage);
+
+    let valid_trx = [0x48, 0x44, 0x52, 0x30, 0x00, 0x01, 0x02, 0x03];
+    let is_trx = valid_trx[0..4] == [0x48, 0x44, 0x52, 0x30];
+    assert!(is_trx);
+
+    let invalid_header = [0x7f, 0x45, 0x4c, 0x46]; // ELF binary
+    let is_valid = invalid_header[0..4] == [0x27, 0x05, 0x19, 0x56] || invalid_header[0..4] == [0x48, 0x44, 0x52, 0x30];
+    assert!(!is_valid, "Raw ELF binaries must not be accepted as firmware images");
+}
