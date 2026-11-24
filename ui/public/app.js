@@ -299,9 +299,34 @@ function initProxyManager() {
             const statusText = document.getElementById("proxy-status-text");
             const proxyPill = document.getElementById("proxy-pill");
             const modeBadge = document.getElementById("proxy-active-mode-badge");
+            const coreInstalledStatus = document.getElementById("core-installed-status");
+            const proxyLanStatus = document.getElementById("proxy-lan-status");
 
             if (modeBadge) {
                 modeBadge.textContent = data.mode === "smart_ru" ? "Smart RU" : data.mode.toUpperCase();
+            }
+
+            if (coreInstalledStatus) {
+                if (data.core_installed) {
+                    coreInstalledStatus.textContent = `✓ Установлено (${data.core_path || '/tmp/sing-box'})`;
+                    coreInstalledStatus.className = "font-semibold text-xs mt-1 text-emerald";
+                } else {
+                    coreInstalledStatus.textContent = "✗ Отсутствует в RAM (/tmp/sing-box)";
+                    coreInstalledStatus.className = "font-semibold text-xs mt-1 text-warning";
+                }
+            }
+
+            if (proxyLanStatus) {
+                if (data.lan_routing) {
+                    proxyLanStatus.textContent = "✓ Активна (br0 → tun0)";
+                    proxyLanStatus.className = "font-semibold mt-1 text-emerald";
+                } else if (data.running) {
+                    proxyLanStatus.textContent = "Инициализация tun0...";
+                    proxyLanStatus.className = "font-semibold mt-1 text-warning";
+                } else {
+                    proxyLanStatus.textContent = "Не активна";
+                    proxyLanStatus.className = "font-semibold mt-1 text-slate";
+                }
             }
 
             if (proxyMasterEnable) {
@@ -316,7 +341,7 @@ function initProxyManager() {
                     proxyPill.className = "badge-status status-good";
                 }
             } else if (data.enabled && !data.core_installed) {
-                if (statusText) statusText.textContent = "Ядро Sing-Box не установлено в Flash (лимит 8 МБ).";
+                if (statusText) statusText.textContent = "Ядро Sing-Box не установлено в RAM (/tmp/sing-box)";
                 if (proxyPill) {
                     proxyPill.textContent = "Core Missing";
                     proxyPill.className = "badge-status status-warning";
@@ -333,6 +358,12 @@ function initProxyManager() {
                     proxyPill.textContent = "Inactive";
                     proxyPill.className = "badge-status status-neutral";
                 }
+            }
+
+            const btnStop = document.getElementById("btn-stop-proxy");
+            if (btnStop) {
+                if (data.running) btnStop.classList.remove("d-none");
+                else btnStop.classList.add("d-none");
             }
 
             // Restore saved URI, parsed config, and mode upon refresh
@@ -491,6 +522,122 @@ function initProxyManager() {
         }
     });
 
+    const btnStopProxy = document.getElementById("btn-stop-proxy");
+    btnStopProxy?.addEventListener("click", async () => {
+        btnStopProxy.disabled = true;
+        btnStopProxy.textContent = "Остановка...";
+        try {
+            const res = await fetch("/api/v1/proxy/toggle", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ enabled: false })
+            });
+            const data = await res.json();
+            if (statusSpan) {
+                setTimedStatus(statusSpan, data.message || "Туннель остановлен", data.success ? "success" : "error", 4000);
+            }
+            await syncProxyStatus();
+        } catch (e) {
+            if (statusSpan) {
+                setTimedStatus(statusSpan, "Ошибка: " + e.message, "error", 4000);
+            }
+        } finally {
+            btnStopProxy.disabled = false;
+            btnStopProxy.textContent = "Остановить туннель";
+        }
+    });
+
+    // ----------------------------------------------------
+    // Sing-Box RAM Core Management (Auto-install & Upload)
+    // ----------------------------------------------------
+    const btnInstallCore = document.getElementById("btn-install-core");
+    const btnUploadCoreTrigger = document.getElementById("btn-upload-core-trigger");
+    const coreFileInput = document.getElementById("core-file-input");
+    const coreActionStatus = document.getElementById("core-action-status");
+
+    btnInstallCore?.addEventListener("click", async () => {
+        btnInstallCore.disabled = true;
+        btnInstallCore.textContent = "⏳ Загрузка в RAM...";
+        if (coreActionStatus) {
+            coreActionStatus.textContent = "Скачивание и распаковка Sing-Box ядра для MT7620 MIPS...";
+            coreActionStatus.style.color = "#94a3b8";
+        }
+        try {
+            const res = await fetch("/api/v1/proxy/core/install", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({})
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (coreActionStatus) {
+                    coreActionStatus.textContent = "✓ " + data.message;
+                    coreActionStatus.style.color = "#34d399";
+                }
+            } else {
+                if (coreActionStatus) {
+                    coreActionStatus.textContent = "✗ " + (data.message || "Ошибка загрузки");
+                    coreActionStatus.style.color = "#f87171";
+                }
+            }
+            await syncProxyStatus();
+        } catch (e) {
+            if (coreActionStatus) {
+                coreActionStatus.textContent = "Ошибка связи: " + e.message;
+                coreActionStatus.style.color = "#f87171";
+            }
+        } finally {
+            btnInstallCore.disabled = false;
+            btnInstallCore.textContent = "⚡ Скачать ядро в RAM";
+        }
+    });
+
+    btnUploadCoreTrigger?.addEventListener("click", () => {
+        coreFileInput?.click();
+    });
+
+    coreFileInput?.addEventListener("change", async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        btnUploadCoreTrigger.disabled = true;
+        btnUploadCoreTrigger.textContent = "⏳ Отправка...";
+        if (coreActionStatus) {
+            coreActionStatus.textContent = `Загрузка файла ${file.name} (${(file.size / 1024 / 1024).toFixed(1)} МБ)...`;
+            coreActionStatus.style.color = "#94a3b8";
+        }
+
+        try {
+            const buf = await file.arrayBuffer();
+            const res = await fetch("/api/v1/proxy/core/upload", {
+                method: "POST",
+                headers: { "Content-Type": "application/octet-stream" },
+                body: buf
+            });
+            const data = await res.json();
+            if (data.success) {
+                if (coreActionStatus) {
+                    coreActionStatus.textContent = "✓ " + data.message;
+                    coreActionStatus.style.color = "#34d399";
+                }
+            } else {
+                if (coreActionStatus) {
+                    coreActionStatus.textContent = "✗ " + (data.message || "Ошибка установки");
+                    coreActionStatus.style.color = "#f87171";
+                }
+            }
+            await syncProxyStatus();
+        } catch (err) {
+            if (coreActionStatus) {
+                coreActionStatus.textContent = "Ошибка отправки: " + err.message;
+                coreActionStatus.style.color = "#f87171";
+            }
+        } finally {
+            btnUploadCoreTrigger.disabled = false;
+            btnUploadCoreTrigger.textContent = "📁 Загрузить файл ядра";
+            coreFileInput.value = "";
+        }
+    });
+
     // ----------------------------------------------------
     // BGP Dynamic Routing for Antizapret
     // ----------------------------------------------------
@@ -585,6 +732,46 @@ function initZapretManager() {
     const probeResults = document.getElementById("zapret-probe-results");
     const probeRec = document.getElementById("zapret-probe-rec");
     const probeList = document.getElementById("zapret-probe-list");
+    const zapretPill = document.getElementById("zapret-status-pill");
+    const restartBtn = document.getElementById("btn-restart-zapret");
+
+    async function syncZapretStatus() {
+        if (!zapretPill) return;
+        try {
+            const res = await fetch("/api/v1/zapret/status");
+            const data = await res.json();
+            if (data.running) {
+                zapretPill.textContent = `Активен (PID: ${data.pid || 'OK'})`;
+                zapretPill.className = "badge-status status-good";
+            } else {
+                zapretPill.textContent = "Остановлен";
+                zapretPill.className = "badge-status status-neutral";
+            }
+        } catch (e) {
+            zapretPill.textContent = "Недоступен";
+            zapretPill.className = "badge-status status-warning";
+        }
+    }
+
+    restartBtn?.addEventListener("click", async () => {
+        restartBtn.disabled = true;
+        restartBtn.textContent = "⏳ Перезапуск...";
+        try {
+            const res = await fetch("/api/v1/zapret/restart", { method: "POST" });
+            const data = await res.json();
+            if (saveStatus) {
+                setTimedStatus(saveStatus, data.message || "Служба перезапущена", data.success ? "success" : "warning", 3500);
+            }
+            await syncZapretStatus();
+        } catch (e) {
+            if (saveStatus) {
+                setTimedStatus(saveStatus, "Ошибка перезапуска: " + e.message, "error", 4000);
+            }
+        } finally {
+            restartBtn.disabled = false;
+            restartBtn.textContent = "🔄 Перезапуск";
+        }
+    });
 
     const descriptions = {
         "1": "General Multi-Split (split2 + badseq + cutoff=d4) — базовая нарезка TCP пакетов для обхода фильтрации без поддельных заголовков.",
@@ -632,6 +819,7 @@ function initZapretManager() {
             if (ytCheckbox) ytCheckbox.checked = !!cfg.youtube_fix;
             if (dcCheckbox) dcCheckbox.checked = !!cfg.discord_fix;
             if (genCheckbox) genCheckbox.checked = !!cfg.general_dpi;
+            syncZapretStatus();
         })
         .catch(e => console.warn("Zapret config load failed:", e));
 
@@ -656,6 +844,7 @@ function initZapretManager() {
             if (saveStatus) {
                 setTimedStatus(saveStatus, data.message || (data.success ? "Параметры Zapret сохранены" : "Ошибка сохранения"), data.success ? "success" : "error", 3500);
             }
+            await syncZapretStatus();
         } catch (e) {
             if (saveStatus) {
                 setTimedStatus(saveStatus, "Ошибка: " + e.message, "error", 4000);
@@ -2168,6 +2357,62 @@ function initSystemManager() {
             if (statusPw) {
                 setTimedStatus(statusPw, "Ошибка: " + err.message, "error", 4000);
             }
+        }
+    });
+
+    // Backup export & restore
+    const btnExport = document.getElementById("btn-export-backup");
+    const btnImportTrigger = document.getElementById("btn-import-backup-trigger");
+    const fileBackupInput = document.getElementById("backup-file-input");
+    const backupStatus = document.getElementById("backup-action-status");
+
+    btnExport?.addEventListener("click", async () => {
+        try {
+            const res = await fetch("/api/v1/system/backup");
+            const data = await res.json();
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: "application/json" });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement("a");
+            a.href = url;
+            a.download = `ferrumos-backup-${new Date().toISOString().slice(0, 10)}.json`;
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+            URL.revokeObjectURL(url);
+            if (backupStatus) setTimedStatus(backupStatus, "Конфигурация выгружена", "success", 3500);
+        } catch (e) {
+            if (backupStatus) setTimedStatus(backupStatus, "Ошибка экспорта: " + e.message, "error", 4000);
+        }
+    });
+
+    btnImportTrigger?.addEventListener("click", () => {
+        fileBackupInput?.click();
+    });
+
+    fileBackupInput?.addEventListener("change", async (e) => {
+        const file = e.target.files?.[0];
+        if (!file) return;
+        if (!confirm(`Восстановить настройки из файла ${file.name}?`)) {
+            fileBackupInput.value = "";
+            return;
+        }
+        try {
+            const text = await file.text();
+            JSON.parse(text); // Validate JSON
+            const res = await fetch("/api/v1/system/restore", {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: text
+            });
+            const data = await res.json();
+            if (backupStatus) setTimedStatus(backupStatus, data.message || "Настройки восстановлены", data.success ? "success" : "error", 4000);
+            if (data.success) {
+                setTimeout(() => location.reload(), 1500);
+            }
+        } catch (err) {
+            if (backupStatus) setTimedStatus(backupStatus, "Ошибка восстановления: " + err.message, "error", 4000);
+        } finally {
+            fileBackupInput.value = "";
         }
     });
 }

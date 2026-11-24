@@ -102,9 +102,8 @@ pub fn build_nfqws_command(config: &ZapretConfig) -> Vec<String> {
             "--dpi-desync-fooling=badseq".into(),
             "--dpi-desync-cutoff=d4".into(),
             "--dpi-desync-repeats=2".into(),
-            "--dpi-desync-any-protocol".into(),
         ],
-        // Preset 2: Fake TLS SNI (ClientHello desync)
+        // Preset 2: Fake TLS SNI (ClientHello desync - Recommended for YouTube)
         2 => vec![
             "--qnum=200".into(),
             "--dpi-desync=fake,split2".into(),
@@ -112,7 +111,6 @@ pub fn build_nfqws_command(config: &ZapretConfig) -> Vec<String> {
             "--dpi-desync-fooling=badseq".into(),
             "--dpi-desync-cutoff=d4".into(),
             "--dpi-desync-repeats=2".into(),
-            "--dpi-desync-any-protocol".into(),
         ],
         // Preset 3: Disorder2 + Badsum (Ростелеком, Мегафон, МТС)
         3 => vec![
@@ -122,7 +120,6 @@ pub fn build_nfqws_command(config: &ZapretConfig) -> Vec<String> {
             "--dpi-desync-fooling=badsum".into(),
             "--dpi-desync-repeats=2".into(),
             "--dpi-desync-cutoff=d4".into(),
-            "--dpi-desync-any-protocol".into(),
         ],
         // Preset 4: Discord WebRTC UDP + YouTube 4K (мультисплит + md5sig)
         4 => vec![
@@ -140,29 +137,38 @@ pub fn build_nfqws_command(config: &ZapretConfig) -> Vec<String> {
             "--dpi-desync-autottl=2".into(),
             "--dpi-desync-fooling=badseq".into(),
             "--dpi-desync-cutoff=d4".into(),
-            "--dpi-desync-any-protocol".into(),
         ],
         // Fallback default
         _ => vec![
             "--qnum=200".into(),
-            "--dpi-desync=fake,multisplit".into(),
-            "--dpi-desync-split-pos=1,midsld".into(),
+            "--dpi-desync=fake,split2".into(),
+            "--dpi-desync-split-pos=1".into(),
             "--dpi-desync-fooling=badseq".into(),
             "--dpi-desync-cutoff=d4".into(),
             "--dpi-desync-repeats=2".into(),
-            "--dpi-desync-any-protocol".into(),
         ],
     }
 }
 
 pub fn apply_zapret_config(cfg: &ZapretConfig) -> Result<(), String> {
     let args = build_nfqws_command(cfg);
-    let args_str = args.join(" ");
+    let mut args_str = args.join(" ");
+    if !args_str.contains("--bind-fix4") {
+        args_str.push_str(" --bind-fix4");
+    }
 
     let _ = fs::create_dir_all("/etc/zapret");
     let _ = fs::write("/etc/zapret/nfqws.args", &args_str);
     let _ = fs::create_dir_all("/etc/storage/zapret");
     let _ = fs::write("/etc/storage/zapret/nfqws.args", &args_str);
+
+    // Persist JSON config in /etc/storage before restarting daemon so S30zapret reads fresh flags
+    if let Ok(json_str) = serde_json::to_string_pretty(cfg) {
+        let _ = fs::create_dir_all("/etc/storage");
+        let _ = fs::write("/etc/zapret_config.json", &json_str);
+        let _ = fs::write("/etc/storage/zapret_config.json", &json_str);
+        let _ = Command::new("mtd_storage.sh").arg("save").output();
+    }
 
     if cfg.enabled {
         let _ = Command::new("/etc/init.d/S30zapret").arg("restart").output();
@@ -246,7 +252,11 @@ mod tests {
             cfg.strategy = s;
             let args = build_nfqws_command(&cfg);
             assert!(args.contains(&"--qnum=200".to_string()));
-            assert!(args.contains(&"--dpi-desync-any-protocol".to_string()));
+            if s == 4 {
+                assert!(args.contains(&"--dpi-desync-any-protocol".to_string()));
+            } else {
+                assert!(!args.contains(&"--dpi-desync-any-protocol".to_string()));
+            }
         }
     }
 

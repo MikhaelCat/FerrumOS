@@ -1,11 +1,32 @@
 #!/bin/sh
-# FerrumOS Sing-Box Runner & Policy Routing Service
-# Handles VLESS Reality & Hysteria 2 with auto-routing via TUN interface tun0
+# FerrumOS Sing-Box Runner & Transparent Proxy Routing Service
+# Routes LAN client traffic through VLESS / Hysteria 2 tunnel (tun0)
 
 CONFIG="/etc/sing-box/config.json"
 BIN="/usr/bin/sing-box"
 [ -x /tmp/sing-box ] && BIN="/tmp/sing-box"
 PIDFILE="/var/run/sing-box.pid"
+TABLE=100
+FWMARK="0x100"
+
+flush_proxy_rules() {
+    # Remove iptables mangle rules
+    while iptables -t mangle -D PREROUTING -i br0 -j FERRUM_PROXY 2>/dev/null; do :; done
+    iptables -t mangle -F FERRUM_PROXY 2>/dev/null || true
+    iptables -t mangle -X FERRUM_PROXY 2>/dev/null || true
+
+    # Remove FORWARD rules for tun0
+    while iptables -D FORWARD -i br0 -o tun0 -j ACCEPT 2>/dev/null; do :; done
+    while iptables -D FORWARD -i tun0 -o br0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do :; done
+    while iptables -D FORWARD -o tun0 -j ACCEPT 2>/dev/null; do :; done
+
+    # Remove NAT masquerade for tun0
+    while iptables -t nat -D POSTROUTING -o tun0 -j MASQUERADE 2>/dev/null; do :; done
+
+    # Remove ip rules and route table 100
+    while ip rule del fwmark $FWMARK table $TABLE 2>/dev/null; do :; done
+    ip route flush table $TABLE 2>/dev/null || true
+}
 
 start_singbox() {
     if [ ! -f "$CONFIG" ]; then
@@ -13,34 +34,138 @@ start_singbox() {
         exit 0
     fi
 
+    # Check if sing-box binary is available
+    if [ ! -x "$BIN" ]; then
+        # Check if compressed core archive exists in /etc/storage or /etc_ro
+        if [ -f /etc/storage/sing-box.gz ]; then
+            echo "[FerrumOS] Decompressing sing-box from /etc/storage/sing-box.gz to /tmp/sing-box..."
+            gzip -dc /etc/storage/sing-box.gz > /tmp/sing-box
+            chmod +x /tmp/sing-box
+            BIN="/tmp/sing-box"
+        elif [ -f /etc_ro/sing-box.gz ]; then
+            echo "[FerrumOS] Decompressing sing-box from /etc_ro/sing-box.gz to /tmp/sing-box..."
+            gzip -dc /etc_ro/sing-box.gz > /tmp/sing-box
+            chmod +x /tmp/sing-box
+            BIN="/tmp/sing-box"
+        fi
+    fi
+
     if [ ! -x "$BIN" ]; then
         echo "[FerrumOS] Sing-Box binary not found at $BIN. Cannot start tunnel."
         exit 1
     fi
 
-    echo "[FerrumOS] Starting Sing-Box tunnel daemon..."
+    echo "[FerrumOS] Starting Sing-Box tunnel daemon with transparent LAN routing..."
 
     # Ensure tun kernel module is loaded
     modprobe tun 2>/dev/null || true
 
-    # Clean old routing table 100
-    ip route flush table 100 2>/dev/null || true
+    # Clean old routing and firewall rules
+    flush_proxy_rules
+
+    # Configure Linux kernel parameters for transparent routing
+    sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
+    sysctl -w net.ipv4.conf.all.rp_filter=2 2>/dev/null || sysctl -w net.ipv4.conf.all.rp_filter=0 2>/dev/null || true
+    sysctl -w net.ipv4.conf.default.rp_filter=2 2>/dev/null || sysctl -w net.ipv4.conf.default.rp_filter=0 2>/dev/null || true
+    sysctl -w net.ipv4.conf.br0.rp_filter=2 2>/dev/null || sysctl -w net.ipv4.conf.br0.rp_filter=0 2>/dev/null || true
+
+    # Limit memory usage for Go runtime on 64MB RAM router
+    export GOMEMLIMIT=16MiB
+    export GOGC=25
 
     # Run sing-box in background
     $BIN run -c "$CONFIG" > /var/log/sing-box.log 2>&1 &
     echo $! > "$PIDFILE"
 
-    echo "[FerrumOS] Sing-box running with PID $(cat "$PIDFILE")."
+    # Wait for tun0 interface to be created
+    TUN_READY=0
+    for i in 1 2 3 4 5; do
+        if ip link show tun0 >/dev/null 2>&1; then
+            TUN_READY=1
+            break
+        fi
+        sleep 1
+    done
+
+    if [ "$TUN_READY" = "1" ]; then
+        sysctl -w net.ipv4.conf.tun0.rp_filter=2 2>/dev/null || sysctl -w net.ipv4.conf.tun0.rp_filter=0 2>/dev/null || true
+
+        # Set up routing table 100 for tun0
+        ip route replace default dev tun0 table $TABLE
+        ip rule add fwmark $FWMARK table $TABLE
+
+        # Create FERRUM_PROXY chain in mangle table
+        iptables -t mangle -N FERRUM_PROXY 2>/dev/null || iptables -t mangle -F FERRUM_PROXY
+        iptables -t mangle -A FERRUM_PROXY -d 127.0.0.0/8 -j RETURN
+        iptables -t mangle -A FERRUM_PROXY -d 192.168.0.0/16 -j RETURN
+        iptables -t mangle -A FERRUM_PROXY -d 10.0.0.0/8 -j RETURN
+        iptables -t mangle -A FERRUM_PROXY -d 172.16.0.0/12 -j RETURN
+
+        # Bypass remote proxy server destination IP so sing-box outbound packets never loop
+        if [ -f /etc/sing-box/proxy_server.txt ]; then
+            SRV_IP="$(cat /etc/sing-box/proxy_server.txt)"
+            [ -n "$SRV_IP" ] && iptables -t mangle -A FERRUM_PROXY -d "$SRV_IP" -j RETURN
+        fi
+
+        # CRITICAL: Never intercept client UDP VPNs (Hysteria 2, QUIC, WireGuard, IPsec, OpenVPN)!
+        # Return ALL UDP traffic except port 53 (DNS)
+        iptables -t mangle -A FERRUM_PROXY -p udp ! --dport 53 -j RETURN
+
+        # Bypass VPN IP protocols (ESP, AH, GRE)
+        iptables -t mangle -A FERRUM_PROXY -p 50 -j RETURN
+        iptables -t mangle -A FERRUM_PROXY -p 51 -j RETURN
+        iptables -t mangle -A FERRUM_PROXY -p 47 -j RETURN
+
+        # Bypass SSH, OpenVPN TCP, PPTP TCP
+        iptables -t mangle -A FERRUM_PROXY -p tcp -m multiport --dports 22,1194,1723 -j RETURN
+
+        # Check routing mode (smart_ru vs global)
+        MODE="smart_ru"
+        if [ -f /etc/storage/proxy_user_config.json ]; then
+            if grep -q '"mode": *"global"' /etc/storage/proxy_user_config.json 2>/dev/null; then
+                MODE="global"
+            fi
+        fi
+
+        if [ "$MODE" = "smart_ru" ]; then
+            # Smart RU: mark Web traffic (ports 80, 443) for sing-box rule matching/sniffing
+            iptables -t mangle -A FERRUM_PROXY -p tcp -m multiport --dports 80,443 -j MARK --set-xmark $FWMARK/$FWMARK
+        else
+            # Global: mark all TCP
+            iptables -t mangle -A FERRUM_PROXY -p tcp -j MARK --set-xmark $FWMARK/$FWMARK
+        fi
+
+        # Route DNS (UDP 53) to sing-box tun0 for unpoisoned resolution
+        iptables -t mangle -A FERRUM_PROXY -p udp --dport 53 -j MARK --set-xmark $FWMARK/$FWMARK
+
+        # Hook into PREROUTING for LAN bridge
+        iptables -t mangle -I PREROUTING -i br0 -j FERRUM_PROXY
+
+        # Allow forwarding between LAN (br0) and TUN (tun0)
+        iptables -I FORWARD -i br0 -o tun0 -j ACCEPT
+        iptables -I FORWARD -i tun0 -o br0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+        iptables -I FORWARD -o tun0 -j ACCEPT
+
+        # NAT Masquerade on tun0
+        iptables -t nat -I POSTROUTING -o tun0 -j MASQUERADE
+
+        # Clamp MSS on tun0 to avoid fragmentation black holes on encapsulated packets
+        iptables -t mangle -I FORWARD -o tun0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+
+        echo "[FerrumOS] Sing-box running (PID $(cat "$PIDFILE")) with full LAN transparent proxying via tun0."
+    else
+        echo "[FerrumOS] Warning: tun0 interface did not appear. Check /var/log/sing-box.log."
+    fi
 }
 
 stop_singbox() {
-    echo "[FerrumOS] Stopping Sing-box..."
+    echo "[FerrumOS] Stopping Sing-box and flushing proxy routing..."
     if [ -f "$PIDFILE" ]; then
         kill "$(cat "$PIDFILE")" 2>/dev/null || true
         rm -f "$PIDFILE"
     fi
     killall sing-box 2>/dev/null || true
-    ip route flush table 100 2>/dev/null || true
+    flush_proxy_rules
 }
 
 case "$1" in

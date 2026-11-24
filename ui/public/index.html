@@ -259,20 +259,47 @@
                     </div>
                 </div>
 
-                <!-- SingBox Status -->
+                <!-- SingBox Core & Status -->
                 <div class="card mb-4">
-                    <div class="card-header">
-                        <h3>Текущий статус туннеля Ferrum-Proxy</h3>
+                    <div class="card-header flex-between">
+                        <div>
+                            <h3>Управление ядром Sing-Box и статус туннеля</h3>
+                            <p class="muted text-xs">Для роутеров с 8 МБ Flash ядро Sing-Box исполняется напрямую из оперативной памяти RAM (/tmp/sing-box).</p>
+                        </div>
+                        <div class="flex-gap" style="align-items:center;">
+                            <span id="proxy-pill" class="badge-status status-neutral">Inactive</span>
+                        </div>
                     </div>
                     <div class="card-body">
-                        <div class="flex-between">
+                        <!-- Core management in RAM -->
+                        <div class="p-3 border rounded mb-3" style="background:#0b1120; border-color:#1e293b;">
+                            <div class="flex-between mb-2">
+                                <div>
+                                    <span class="muted text-xs">Исполняемое ядро Sing-Box в RAM:</span>
+                                    <div id="core-installed-status" class="font-semibold text-xs mt-1 text-warning">Ядро отсутствует в RAM</div>
+                                </div>
+                                <div class="flex-gap">
+                                    <button class="btn btn-sm btn-outline" id="btn-install-core" title="Автоматически скачать скомпилированное ядро для MT7620 MIPS в оперативную память">⚡ Скачать ядро в RAM</button>
+                                    <button class="btn btn-sm btn-outline" id="btn-upload-core-trigger" title="Загрузить локальный файл sing-box или sing-box.gz с компьютера">📁 Загрузить файл ядра</button>
+                                    <input type="file" id="core-file-input" style="display:none;">
+                                </div>
+                            </div>
+                            <div id="core-action-status" class="text-xs" style="min-height:16px;"></div>
+                        </div>
+
+                        <!-- Status Grid -->
+                        <div class="grid grid-3 text-xs mb-1">
                             <div>
-                                <span class="muted text-xs">Статус ядра Sing-Box:</span>
-                                <h4 id="proxy-status-text" class="text-emerald">Готов к работе</h4>
+                                <span class="muted">Статус туннеля:</span>
+                                <h4 id="proxy-status-text" class="text-emerald mt-1">Отключен</h4>
                             </div>
                             <div>
-                                <span class="muted text-xs">Активный режим:</span>
-                                <div id="proxy-active-mode-badge" class="badge-pill">Smart RU</div>
+                                <span class="muted">Маршрутизация LAN (br0 → tun0):</span>
+                                <div id="proxy-lan-status" class="font-semibold mt-1 text-slate">Не активна</div>
+                            </div>
+                            <div>
+                                <span class="muted">Активный режим:</span>
+                                <div id="proxy-active-mode-badge" class="badge-pill mt-1">Smart RU</div>
                             </div>
                         </div>
                     </div>
@@ -335,6 +362,8 @@
                             <p class="muted text-xs">Разблокировка YouTube 4K 60fps и голосовых каналов Discord напрямую через вашего провайдера БЕЗ VPN и VPS серверов!</p>
                         </div>
                         <div class="flex-gap" style="align-items:center;">
+                            <span id="zapret-status-pill" class="badge-status status-neutral">Checking...</span>
+                            <button class="btn btn-sm btn-outline" id="btn-restart-zapret" title="Перезапустить процесс nfqws с текущими аргументами">🔄 Перезапуск</button>
                             <span class="text-xs font-semibold" id="zapret-master-label">Включен</span>
                             <label class="switch">
                                 <input type="checkbox" id="zapret-master-enable" checked>
@@ -1820,10 +1849,13 @@
                         <h3>Управление системой</h3>
                     </div>
                     <div class="card-body flex-gap">
-                        <button class="btn btn-outline" onclick="alert('Конфигурация выгружена в формате JSON')">Экспорт настроек (JSON)</button>
+                        <button class="btn btn-outline" id="btn-export-backup">Экспорт настроек (JSON)</button>
+                        <button class="btn btn-outline" id="btn-import-backup-trigger">Импорт настроек (JSON)</button>
+                        <input type="file" id="backup-file-input" accept=".json" style="display:none;">
                         <button class="btn btn-warning" onclick="if(confirm('Перезагрузить роутер?')) fetch('/api/v1/system/reboot', {method:'POST'});">Перезагрузить</button>
                         <button class="btn btn-danger" onclick="localStorage.removeItem('ferrum_auth_token'); location.reload();">Выйти из системы (Logout)</button>
                     </div>
+                    <div id="backup-action-status" class="card-body text-xs pt-0" style="min-height:18px;"></div>
                 </div>
             </section>
         </main>

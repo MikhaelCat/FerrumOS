@@ -9,14 +9,20 @@ QNUM=200
 flush_zapret_rules() {
     # Thoroughly flush all duplicate rules until iptables -D returns non-zero
     while iptables -D FORWARD -p udp --dport 443 -j REJECT --reject-with icmp-port-unreachable 2>/dev/null; do :; done
+    while iptables -D FORWARD -p udp --dport 443 -j REJECT 2>/dev/null; do :; done
     while iptables -D FORWARD -p udp --dport 443 -j DROP 2>/dev/null; do :; done
+    while iptables -D FORWARD -p udp --dport 443 -j ACCEPT 2>/dev/null; do :; done
     while iptables -t mangle -D POSTROUTING -p udp --dport 443 -j DROP 2>/dev/null; do :; done
+    while iptables -t mangle -D PREROUTING -p udp --dport 443 -j DROP 2>/dev/null; do :; done
+    while iptables -t filter -D INPUT -p udp --dport 443 -j DROP 2>/dev/null; do :; done
+    while iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -j ZAPRET_NFQ 2>/dev/null; do :; done
     while iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null; do :; done
     while iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM 2>/dev/null; do :; done
-    while iptables -t mangle -D POSTROUTING -p tcp -m multiport --dports 80,443 -j ZAPRET_NFQ 2>/dev/null; do :; done
     while iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j ZAPRET_NFQ 2>/dev/null; do :; done
-    while iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null; do :; done
+    while iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null; do :; done
     while iptables -t mangle -D POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM 2>/dev/null; do :; done
+    while iptables -t mangle -D POSTROUTING -p udp --dport 50000:50099 -j ZAPRET_NFQ 2>/dev/null; do :; done
+    while iptables -t mangle -D POSTROUTING -p udp --dport 50000:50099 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null; do :; done
     iptables -t mangle -F ZAPRET_NFQ 2>/dev/null || true
     iptables -t mangle -X ZAPRET_NFQ 2>/dev/null || true
 }
@@ -27,28 +33,94 @@ start_zapret() {
     # Ensure NFQUEUE kernel module is loaded
     modprobe xt_NFQUEUE 2>/dev/null || true
 
+    # Kill any existing nfqws process to prevent duplicate instances on qnum 200
+    killall nfqws 2>/dev/null || true
+    sleep 1
+
     # Clean old iptables rules to prevent duplicate entries
     flush_zapret_rules
 
-    # YouTube 4K & HTTPS bypass: Send initial TLS/HTTP packets to NFQUEUE with --queue-bypass
-    # CRITICAL: --queue-bypass guarantees that packets are NEVER dropped even if nfqws is busy or restarting!
-    # NOTE: UDP 443 (QUIC / Hysteria 2) is NEVER blocked, guaranteeing high-speed UDP tunnels for phones & PCs.
-    iptables -t mangle -A POSTROUTING -p tcp -m multiport --dports 80,443 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass
-    
-    # Discord Voice UDP (Voice IP Discovery)
-    iptables -t mangle -A POSTROUTING -p udp --dport 50000:65535 -j NFQUEUE --queue-num $QNUM --queue-bypass 2>/dev/null || true
+    # Explicitly guarantee UDP 443 is ACCEPTED in FORWARD chain
+    # This prevents any downstream firewall rules from dropping Hysteria 2 / QUIC VPN from phones and PCs!
+    iptables -I FORWARD -p udp --dport 443 -j ACCEPT
+
+    # Create dedicated ZAPRET_NFQ chain
+    iptables -t mangle -N ZAPRET_NFQ 2>/dev/null || iptables -t mangle -F ZAPRET_NFQ
+
+    # Return on LAN and private subnets
+    iptables -t mangle -A ZAPRET_NFQ -d 127.0.0.0/8 -j RETURN
+    iptables -t mangle -A ZAPRET_NFQ -d 192.168.0.0/16 -j RETURN
+    iptables -t mangle -A ZAPRET_NFQ -d 10.0.0.0/8 -j RETURN
+    iptables -t mangle -A ZAPRET_NFQ -d 172.16.0.0/12 -j RETURN
+
+    # GUARANTEE UDP 443 (Hysteria 2 / QUIC / TUIC) IS NEVER TOUCHED OR DESYNCED BY NFQUEUE
+    iptables -t mangle -A ZAPRET_NFQ -p udp --dport 443 -j RETURN
+
+    # Explicit bypass for all external VPN client ports and IP protocols
+    iptables -t mangle -A ZAPRET_NFQ -p udp -m multiport --dports 500,1194,1701,4500,51820,41641,9993 -j RETURN
+    iptables -t mangle -A ZAPRET_NFQ -p 50 -j RETURN
+    iptables -t mangle -A ZAPRET_NFQ -p 51 -j RETURN
+    iptables -t mangle -A ZAPRET_NFQ -p 47 -j RETURN
+
+    # Return on VPN / Tunnel marks (0x100 for VLESS, 0x40000000 for kernel tunnels)
+    iptables -t mangle -A ZAPRET_NFQ -m mark --mark 0x100/0x100 -j RETURN
+    iptables -t mangle -A ZAPRET_NFQ -m mark --mark 0x40000000/0x40000000 -j RETURN
+
+    # Bypass remote proxy server destination IP so tunnel packets never get desynced
+    if [ -f /etc/sing-box/proxy_server.txt ]; then
+        PROXY_SRV="$(cat /etc/sing-box/proxy_server.txt)"
+        [ -n "$PROXY_SRV" ] && iptables -t mangle -A ZAPRET_NFQ -d "$PROXY_SRV" -j RETURN
+    fi
+
+    # Pass initial TCP SYN/ClientHello packets (packets 1:6) to NFQUEUE with queue-bypass
+    iptables -t mangle -A ZAPRET_NFQ -p tcp -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass
+
+    # Check if Discord voice fix is active in config (defaults to true)
+    DC_FIX=1
+    if [ -f /etc/storage/zapret_config.json ]; then
+        if grep -q '"discord_fix": false' /etc/storage/zapret_config.json 2>/dev/null; then
+            DC_FIX=0
+        fi
+    elif [ -f /etc/zapret_config.json ]; then
+        if grep -q '"discord_fix": false' /etc/zapret_config.json 2>/dev/null; then
+            DC_FIX=0
+        fi
+    fi
+
+    # Only forward Discord Voice WebRTC UDP (ports 50000:50099) if enabled, and limit to packets 1:6
+    # NARROWED FROM 50000:65535 SO WIREGUARD (51820) AND HYSTERIA HIGH PORTS ARE NEVER TOUCHED
+    if [ "$DC_FIX" = "1" ]; then
+        iptables -t mangle -A ZAPRET_NFQ -p udp --dport 50000:50099 -m connbytes --connbytes-dir=original --connbytes-mode=packets --connbytes 1:6 -j NFQUEUE --queue-num $QNUM --queue-bypass
+    fi
+
+    # Hook ZAPRET_NFQ into POSTROUTING for TCP 80,443 and (if enabled) UDP 50000:50099
+    iptables -t mangle -I POSTROUTING -p tcp -m multiport --dports 80,443 -j ZAPRET_NFQ
+    if [ "$DC_FIX" = "1" ]; then
+        iptables -t mangle -I POSTROUTING -p udp --dport 50000:50099 -j ZAPRET_NFQ
+    fi
+
+    # Locate nfqws binary
+    [ ! -x "$NFQWS" ] && [ -x /usr/sbin/nfqws ] && NFQWS="/usr/sbin/nfqws"
+    [ ! -x "$NFQWS" ] && [ -x /tmp/nfqws ] && NFQWS="/tmp/nfqws"
+
+    if [ ! -x "$NFQWS" ]; then
+        echo "[FerrumOS] Error: nfqws binary not found. Cannot start Zapret."
+        exit 1
+    fi
 
     # Launch nfqws with selected strategy preset (or custom args)
-    ARGS="--qnum=$QNUM --dpi-desync=fake,multisplit --dpi-desync-split-pos=1,midsld --dpi-desync-fooling=badseq --dpi-desync-cutoff=d4 --dpi-desync-repeats=2 --dpi-desync-any-protocol"
+    ARGS="--qnum=$QNUM --dpi-desync=fake,split2 --dpi-desync-split-pos=1 --dpi-desync-fooling=badseq --dpi-desync-cutoff=d4 --dpi-desync-repeats=2 --bind-fix4"
     if [ -f /etc/zapret/nfqws.args ]; then
         ARGS="$(cat /etc/zapret/nfqws.args)"
     elif [ -f /etc/storage/zapret/nfqws.args ]; then
         ARGS="$(cat /etc/storage/zapret/nfqws.args)"
     fi
 
-    $NFQWS $ARGS --daemon
+    # Start nfqws daemon with pidfile
+    $NFQWS $ARGS --pidfile=/var/run/nfqws.pid --daemon
 
-    echo "[FerrumOS] Zapret active: YouTube 4K and Discord voice unblocked."
+    echo "[FerrumOS] Zapret active: YouTube 4K and Discord voice unblocked without dropping UDP 443 / Hysteria."
+}
 }
 
 stop_zapret() {

@@ -1,4 +1,5 @@
 use crate::parser::{ProxyConfig, ProxyType};
+use crate::network::is_valid_ipv4;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -64,9 +65,13 @@ pub struct InboundConfig {
     pub inet4_address: Option<String>,
     pub auto_route: bool,
     pub strict_route: bool,
+    #[serde(default)]
+    pub auto_redirect: bool,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub stack: Option<String>,
     pub sniff: bool,
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub sniff_override_destination: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -352,6 +357,15 @@ pub fn generate_singbox_config(
         }
     };
 
+    let mut final_dns_rules = dns_rules;
+    // Always resolve the proxy server domain directly to break circular bootstrap dependency in all modes
+    if !is_valid_ipv4(&proxy.server) {
+        final_dns_rules.insert(0, DnsRule {
+            domain_suffix: vec![proxy.server.clone()],
+            server: "dns-direct".into(),
+        });
+    }
+
     Ok(SingBoxConfig {
         log: LogConfig {
             level: "warn".into(),
@@ -370,7 +384,7 @@ pub fn generate_singbox_config(
                     detour: Some(proxy.tag.clone()),
                 },
             ],
-            rules: dns_rules,
+            rules: final_dns_rules,
             final_server: final_dns,
         },
         inbounds: vec![InboundConfig {
@@ -380,8 +394,10 @@ pub fn generate_singbox_config(
             inet4_address: Some("172.19.0.1/30".into()),
             auto_route: true,
             strict_route: false,
+            auto_redirect: true,
             stack: Some("system".into()), // lowest memory overhead
             sniff: true,
+            sniff_override_destination: true,
         }],
         outbounds: vec![
             proxy_outbound,

@@ -19,6 +19,7 @@ use crate::singbox::{generate_singbox_config, RoutingMode, SingBoxConfig};
 use crate::system::get_system_status;
 use crate::zapret::{apply_zapret_config, get_zapret_status, probe_zapret_strategies, ZapretConfig};
 use serde::{Deserialize, Serialize};
+use std::net::ToSocketAddrs;
 use std::sync::{Arc, Mutex};
 use std::time::Instant;
 use tiny_http::{Header, Method, Request, Response, StatusCode};
@@ -107,6 +108,12 @@ impl AppState {
             .and_then(|s| serde_json::from_str::<ZapretConfig>(&s).ok())
             .unwrap_or_default();
 
+        if !zapret_cfg.enabled {
+            let _ = std::process::Command::new("/etc/init.d/S30zapret").arg("stop").output();
+        } else {
+            let _ = apply_zapret_config(&zapret_cfg);
+        }
+
         let admin_pw = std::fs::read_to_string("/etc/storage/admin_password.txt")
             .ok()
             .map(|s| s.trim().to_string())
@@ -123,6 +130,18 @@ impl AppState {
         } else {
             (None, false, RoutingMode::SmartRu)
         };
+
+        if init_proxy_enabled {
+            std::thread::spawn(|| {
+                std::thread::sleep(std::time::Duration::from_secs(3));
+                if std::path::Path::new("/usr/bin/sing-box").exists()
+                    || std::path::Path::new("/tmp/sing-box").exists()
+                    || std::path::Path::new("/etc/storage/sing-box.gz").exists()
+                {
+                    let _ = std::process::Command::new("/etc/init.d/S40singbox").arg("start").output();
+                }
+            });
+        }
 
         AppState {
             proxy_config: Arc::new(Mutex::new(init_proxy_cfg)),
@@ -219,6 +238,20 @@ struct ApplyProxyReq {
     enabled: bool,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SystemBackup {
+    pub version: String,
+    pub timestamp: u64,
+    pub proxy_user_state: Option<ProxyUserState>,
+    pub zapret_config: Option<ZapretConfig>,
+    pub wifi_config: Option<WifiConfig>,
+    pub lan_config: Option<LanDhcpConfig>,
+    pub wan_config: Option<WanConfig>,
+    pub dns_config: Option<DnsAdvancedConfig>,
+    pub firewall_config: Option<FirewallConfig>,
+    pub qos_config: Option<SqmQosConfig>,
+}
+
 fn default_true() -> bool {
     true
 }
@@ -235,6 +268,8 @@ pub struct ProxyStatusResp {
     pub enabled: bool,
     pub running: bool,
     pub core_installed: bool,
+    pub core_path: Option<String>,
+    pub lan_routing: bool,
     pub mode: RoutingMode,
     pub current_proxy: Option<ProxyConfig>,
     pub raw_uri: Option<String>,
@@ -262,6 +297,93 @@ struct TestPingResp {
     success: bool,
     latency_ms: Option<u64>,
     error: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct InstallCoreReq {
+    url: Option<String>,
+}
+
+#[derive(Serialize)]
+struct CoreUploadResp {
+    success: bool,
+    message: String,
+    file_size: usize,
+}
+
+fn install_singbox_core(url: Option<&str>) -> Result<String, String> {
+    let target_url = url.unwrap_or("https://github.com/SagerNet/sing-box/releases/download/v1.14.4/sing-box-1.14.4-linux-mipsle-softfloat.tar.gz");
+    let output = std::process::Command::new("wget")
+        .args(["-q", "-O", "/tmp/sing-box.tar.gz", target_url])
+        .output()
+        .map_err(|e| format!("Ошибка вызова wget: {}", e))?;
+
+    if !output.status.success() {
+        return Err("Не удалось загрузить архив ядра Sing-Box через wget. Проверьте подключение к сети.".into());
+    }
+
+    let untar = std::process::Command::new("tar")
+        .args(["-xzf", "/tmp/sing-box.tar.gz", "-C", "/tmp"])
+        .output()
+        .map_err(|e| format!("Ошибка распаковки архива: {}", e))?;
+
+    if !untar.status.success() {
+        return Err("Ошибка при распаковке tar.gz архива".into());
+    }
+
+    let _ = std::fs::remove_file("/tmp/sing-box.tar.gz");
+
+    if !std::path::Path::new("/tmp/sing-box").exists() {
+        if let Ok(entries) = std::fs::read_dir("/tmp") {
+            for entry in entries.flatten() {
+                let p = entry.path();
+                if p.is_dir() {
+                    let candidate = p.join("sing-box");
+                    if candidate.exists() {
+                        let _ = std::fs::rename(&candidate, "/tmp/sing-box");
+                        let _ = std::fs::remove_dir_all(&p);
+                        break;
+                    }
+                }
+            }
+        }
+    }
+
+    if std::path::Path::new("/tmp/sing-box").exists() {
+        let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
+        Ok("Ядро Sing-Box успешно загружено в RAM (/tmp/sing-box) и готово к работе".into())
+    } else {
+        Err("Исполняемый файл sing-box не обнаружен после распаковки архива".into())
+    }
+}
+
+fn upload_singbox_core(bytes: &[u8]) -> Result<usize, String> {
+    if bytes.len() < 100_000 {
+        return Err("Размер файла слишком мал для исполняемого ядра Sing-Box".into());
+    }
+
+    if bytes.len() >= 2 && bytes[0] == 0x1f && bytes[1] == 0x8b {
+        let gz_path = "/tmp/sing-box.gz";
+        std::fs::write(gz_path, bytes).map_err(|e| format!("Ошибка записи архива: {}", e))?;
+        let _ = std::process::Command::new("gzip").args(["-d", "-f", gz_path]).output();
+        if std::path::Path::new("/tmp/sing-box").exists() {
+            let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
+            let size = std::fs::metadata("/tmp/sing-box").map(|m| m.len() as usize).unwrap_or(bytes.len());
+            return Ok(size);
+        } else {
+            return Err("Ошибка распаковки sing-box.gz".into());
+        }
+    }
+
+    if bytes.len() >= 4 && bytes[0..4] == [0x7f, b'E', b'L', b'F'] {
+        std::fs::write("/tmp/sing-box", bytes).map_err(|e| format!("Ошибка записи /tmp/sing-box: {}", e))?;
+        let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
+        return Ok(bytes.len());
+    }
+
+    std::fs::write("/tmp/sing-box", bytes).map_err(|e| format!("Ошибка сохранения: {}", e))?;
+    let _ = std::process::Command::new("chmod").args(["755", "/tmp/sing-box"]).output();
+    Ok(bytes.len())
 }
 
 // Embedded Web UI assets
@@ -960,7 +1082,7 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                         match sb_cfg {
                             Ok(cfg) => {
                                 // Save active state
-                                *state.proxy_config.lock().unwrap() = Some(parsed);
+                                *state.proxy_config.lock().unwrap() = Some(parsed.clone());
                                 *state.proxy_enabled.lock().unwrap() = data.enabled;
                                 *state.routing_mode.lock().unwrap() = data.mode.clone();
 
@@ -984,6 +1106,18 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                                 let _ = std::fs::write("/etc/sing-box/config.json", &json_str);
                                 let _ = std::fs::write("/etc/storage/sing-box/config.json", &json_str);
 
+                                // Save proxy server address for firewall and Zapret bypass
+                                // Resolve hostname to numerical IPv4 to ensure iptables rules never fail
+                                let resolved_ip = format!("{}:{}", parsed.server, parsed.server_port)
+                                    .to_socket_addrs()
+                                    .ok()
+                                    .and_then(|mut addrs| addrs.next())
+                                    .map(|a| a.ip().to_string())
+                                    .unwrap_or_else(|| parsed.server.clone());
+
+                                let _ = std::fs::write("/etc/sing-box/proxy_server.txt", &resolved_ip);
+                                let _ = std::fs::write("/etc/storage/sing-box/proxy_server.txt", &resolved_ip);
+
                                 // Commit to MTD Flash partition (mtd3 RW config) so settings survive reboot
                                 let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
 
@@ -996,7 +1130,7 @@ pub fn handle_request(mut request: Request, state: &AppState) {
 
                                 let resp = GenericResp {
                                     success: true,
-                                    message: "Proxy configuration successfully applied, saved to Flash, and tunnel active".into(),
+                                    message: "Конфигурация туннеля успешно сохранена в Flash и применена".into(),
                                 };
                                 respond_json(request, &resp, cors_header, content_type_json);
                             }
@@ -1032,7 +1166,14 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             let proxy = state.proxy_config.lock().unwrap().clone();
             let mode = state.routing_mode.lock().unwrap().clone();
             let enabled = *state.proxy_enabled.lock().unwrap();
-            let core_installed = std::path::Path::new("/usr/bin/sing-box").exists() || std::path::Path::new("/tmp/sing-box").exists();
+            let (core_installed, core_path) = if std::path::Path::new("/tmp/sing-box").exists() {
+                (true, Some("/tmp/sing-box".to_string()))
+            } else if std::path::Path::new("/usr/bin/sing-box").exists() {
+                (true, Some("/usr/bin/sing-box".to_string()))
+            } else {
+                (false, None)
+            };
+            let lan_routing = std::path::Path::new("/sys/class/net/tun0").exists();
             let running = if core_installed {
                 std::process::Command::new("pidof")
                     .arg("sing-box")
@@ -1044,11 +1185,13 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             };
 
             let status_text = if !core_installed && enabled {
-                "Ядро Sing-Box не установлено во Flash (лимит 8 МБ). Доступна загрузка в RAM (/tmp) или USB".into()
+                "Ядро Sing-Box не установлено в RAM (/tmp/sing-box). Загрузите ядро кнопкой ниже.".into()
             } else if !running && enabled {
                 "Служба Sing-Box остановлена".into()
+            } else if running && enabled && lan_routing {
+                "Туннель активен. Маршрутизация LAN (br0 -> tun0) работает в штатном режиме.".into()
             } else if running && enabled {
-                "Туннель активен (Подключено)".into()
+                "Служба Sing-Box запущена, туннель инициализируется...".into()
             } else {
                 "Туннель отключен".into()
             };
@@ -1063,6 +1206,8 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                 enabled,
                 running,
                 core_installed,
+                core_path,
+                lan_routing,
                 mode,
                 current_proxy: proxy,
                 raw_uri,
@@ -1073,6 +1218,56 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             respond_json(request, &resp, cors_header, content_type_json);
         }
 
+        // REST API: Proxy core install (auto-download into /tmp/sing-box)
+        (Method::Post, "/api/v1/proxy/core/install") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            let req: Result<InstallCoreReq, _> = serde_json::from_str(&body);
+            let url_opt = req.ok().and_then(|r| r.url);
+            match install_singbox_core(url_opt.as_deref()) {
+                Ok(msg) => {
+                    let resp = GenericResp { success: true, message: msg };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                }
+                Err(e) => {
+                    let resp = GenericResp { success: false, message: e };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                }
+            }
+        }
+
+        // REST API: Proxy core upload (manual binary/gzip upload into /tmp/sing-box)
+        (Method::Post, "/api/v1/proxy/core/upload") => {
+            let mut body_bytes = Vec::new();
+            let read_res = request.as_reader().read_to_end(&mut body_bytes);
+            if read_res.is_err() || body_bytes.len() < 100_000 {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Ошибка передачи: размер файла ядра слишком мал (< 100 КБ) или поток был прерван".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+                return;
+            }
+
+            match upload_singbox_core(&body_bytes) {
+                Ok(sz) => {
+                    let resp = CoreUploadResp {
+                        success: true,
+                        message: format!("Исполняемое ядро Sing-Box успешно сохранено в RAM (/tmp/sing-box, {} байт)", sz),
+                        file_size: sz,
+                    };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                }
+                Err(e) => {
+                    let resp = GenericResp {
+                        success: false,
+                        message: format!("Ошибка установки ядра: {}", e),
+                    };
+                    respond_json(request, &resp, cors_header, content_type_json);
+                }
+            }
+        }
+
         // REST API: Ping test
         (Method::Post, "/api/v1/proxy/test") => {
             let mut body = String::new();
@@ -1081,26 +1276,40 @@ pub fn handle_request(mut request: Request, state: &AppState) {
 
             match req {
                 Ok(data) => {
-                    let addr = format!("{}:{}", data.host, data.port);
+                    let addr_str = format!("{}:{}", data.host, data.port);
                     let start = Instant::now();
-                    match std::net::TcpStream::connect_timeout(
-                        &addr.parse().unwrap_or_else(|_| "1.1.1.1:443".parse().unwrap()),
-                        std::time::Duration::from_millis(2000),
-                    ) {
-                        Ok(_) => {
-                            let duration = start.elapsed().as_millis() as u64;
-                            let resp = TestPingResp {
-                                success: true,
-                                latency_ms: Some(duration),
-                                error: None,
-                            };
-                            respond_json(request, &resp, cors_header, content_type_json);
+                    let target_addr = match addr_str.to_socket_addrs() {
+                        Ok(mut addrs) => addrs.next(),
+                        Err(_) => None,
+                    };
+
+                    match target_addr {
+                        Some(sa) => {
+                            match std::net::TcpStream::connect_timeout(&sa, std::time::Duration::from_millis(2500)) {
+                                Ok(_) => {
+                                    let duration = start.elapsed().as_millis() as u64;
+                                    let resp = TestPingResp {
+                                        success: true,
+                                        latency_ms: Some(duration),
+                                        error: None,
+                                    };
+                                    respond_json(request, &resp, cors_header, content_type_json);
+                                }
+                                Err(e) => {
+                                    let resp = TestPingResp {
+                                        success: false,
+                                        latency_ms: None,
+                                        error: Some(format!("Таймаут подключения ({}): {}", addr_str, e)),
+                                    };
+                                    respond_json(request, &resp, cors_header, content_type_json);
+                                }
+                            }
                         }
-                        Err(e) => {
+                        None => {
                             let resp = TestPingResp {
                                 success: false,
                                 latency_ms: None,
-                                error: Some(format!("Connection timeout or error: {}", e)),
+                                error: Some(format!("Не удалось разрешить DNS-имя хоста: {}", data.host)),
                             };
                             respond_json(request, &resp, cors_header, content_type_json);
                         }
@@ -1156,6 +1365,20 @@ pub fn handle_request(mut request: Request, state: &AppState) {
         (Method::Post, "/api/v1/zapret/probe") => {
             let probe_res = probe_zapret_strategies();
             respond_json(request, &probe_res, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/zapret/restart") => {
+            let cfg = state.zapret_config.lock().unwrap().clone();
+            let _ = apply_zapret_config(&cfg);
+            let status = get_zapret_status(cfg.strategy);
+            let resp = GenericResp {
+                success: status.running,
+                message: if status.running {
+                    format!("Служба Zapret успешно перезапущена (PID {})", status.pid.unwrap_or(0))
+                } else {
+                    "Служба Zapret перезапущена".into()
+                },
+            };
+            respond_json(request, &resp, cors_header, content_type_json);
         }
 
         // REST API: Firmware Upload & Pre-flash Validation
@@ -1235,6 +1458,98 @@ pub fn handle_request(mut request: Request, state: &AppState) {
                 message: "Запущена запись во Flash-память (Firmware_Stub). Роутер автоматически перезагрузится через 30-45 секунд.".into(),
             };
             respond_json(request, &resp, cors_header, content_type_json);
+        }
+
+        // REST API: System Configuration Backup & Restore
+        (Method::Get, "/api/v1/system/backup") => {
+            let backup = SystemBackup {
+                version: "1.0.0".into(),
+                timestamp: std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|d| d.as_secs())
+                    .unwrap_or(0),
+                proxy_user_state: state.proxy_user_state.lock().unwrap().clone(),
+                zapret_config: Some(state.zapret_config.lock().unwrap().clone()),
+                wifi_config: Some(state.wifi_config.lock().unwrap().clone()),
+                lan_config: Some(state.lan_config.lock().unwrap().clone()),
+                wan_config: Some(state.wan_config.lock().unwrap().clone()),
+                dns_config: Some(state.dns_config.lock().unwrap().clone()),
+                firewall_config: Some(state.firewall_config.lock().unwrap().clone()),
+                qos_config: Some(state.qos_config.lock().unwrap().clone()),
+            };
+            respond_json(request, &backup, cors_header, content_type_json);
+        }
+        (Method::Post, "/api/v1/system/restore") => {
+            let mut body = String::new();
+            let _ = request.as_reader().read_to_string(&mut body);
+            if let Ok(backup) = serde_json::from_str::<SystemBackup>(&body) {
+                if let Some(pus) = backup.proxy_user_state {
+                    *state.proxy_user_state.lock().unwrap() = Some(pus.clone());
+                    if let Ok(js) = serde_json::to_string_pretty(&pus) {
+                        let _ = std::fs::create_dir_all("/etc/storage");
+                        let _ = std::fs::write("/etc/storage/proxy_user_config.json", js);
+                    }
+                }
+                if let Some(zc) = backup.zapret_config {
+                    *state.zapret_config.lock().unwrap() = zc.clone();
+                    let _ = apply_zapret_config(&zc);
+                }
+                if let Some(wc) = backup.wifi_config {
+                    *state.wifi_config.lock().unwrap() = wc.clone();
+                    let _ = apply_wifi_config(&wc);
+                    if let Ok(js) = serde_json::to_string_pretty(&wc) {
+                        let _ = std::fs::write("/etc/storage/wifi_config.json", js);
+                    }
+                }
+                if let Some(lc) = backup.lan_config {
+                    *state.lan_config.lock().unwrap() = lc.clone();
+                    let _ = apply_lan_config(&lc);
+                    if let Ok(js) = serde_json::to_string_pretty(&lc) {
+                        let _ = std::fs::write("/etc/storage/lan_config.json", js);
+                    }
+                }
+                if let Some(wanc) = backup.wan_config {
+                    *state.wan_config.lock().unwrap() = wanc.clone();
+                    let _ = apply_wan_config(&wanc);
+                    if let Ok(js) = serde_json::to_string_pretty(&wanc) {
+                        let _ = std::fs::write("/etc/storage/wan_config.json", js);
+                    }
+                }
+                if let Some(dc) = backup.dns_config {
+                    *state.dns_config.lock().unwrap() = dc.clone();
+                    let _ = apply_dns_config(&dc);
+                    if let Ok(js) = serde_json::to_string_pretty(&dc) {
+                        let _ = std::fs::write("/etc/storage/dns_config.json", js);
+                    }
+                }
+                if let Some(fc) = backup.firewall_config {
+                    *state.firewall_config.lock().unwrap() = fc.clone();
+                    let _ = apply_firewall_config(&fc);
+                    if let Ok(js) = serde_json::to_string_pretty(&fc) {
+                        let _ = std::fs::write("/etc/storage/firewall_config.json", js);
+                    }
+                }
+                if let Some(qc) = backup.qos_config {
+                    *state.qos_config.lock().unwrap() = qc.clone();
+                    let _ = apply_sqm_qos(&qc);
+                    if let Ok(js) = serde_json::to_string_pretty(&qc) {
+                        let _ = std::fs::write("/etc/storage/qos_config.json", js);
+                    }
+                }
+                let _ = std::process::Command::new("mtd_storage.sh").arg("save").output();
+
+                let resp = GenericResp {
+                    success: true,
+                    message: "Конфигурация успешно восстановлена и сохранена в Flash".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            } else {
+                let resp = GenericResp {
+                    success: false,
+                    message: "Ошибка разбора файла резервной копии. Проверьте формат JSON.".into(),
+                };
+                respond_json(request, &resp, cors_header, content_type_json);
+            }
         }
 
         // REST API: System Reboot
