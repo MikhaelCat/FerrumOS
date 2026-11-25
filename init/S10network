@@ -38,6 +38,18 @@ sysctl -w net.core.somaxconn=512 2>/dev/null || true
 sysctl -w net.ipv4.tcp_fin_timeout=15 2>/dev/null || true
 sysctl -w net.ipv4.tcp_tw_reuse=1 2>/dev/null || true
 
+# Configure 32MB ZRAM compressed swap for 64MB RAM router
+if [ -f /lib/modules/3.4.113/kernel/drivers/block/zram/zram.ko ]; then
+    insmod /lib/modules/3.4.113/kernel/drivers/block/zram/zram.ko num_devices=1 2>/dev/null || true
+    if [ -d /sys/block/zram0 ]; then
+        echo 33554432 > /sys/block/zram0/disksize 2>/dev/null || true
+        mkswap /dev/zram0 2>/dev/null || true
+        swapon -p 32767 /dev/zram0 2>/dev/null || true
+        sysctl -w vm.swappiness=60 2>/dev/null || true
+        echo "[FerrumOS] 32MB ZRAM swap enabled."
+    fi
+fi
+
 # IP Forwarding & Conntrack Tuning for Zero-Drop Client VPNs (Hysteria, WireGuard, IPsec, OpenVPN)
 sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
 sysctl -w net.ipv4.conf.all.rp_filter=0 2>/dev/null || true
@@ -69,6 +81,8 @@ iptables -t mangle -A FORWARD -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-m
 echo 1 > /proc/sys/net/nat/fast_nat 2>/dev/null || true
 
 # WAN configuration (DHCP client on eth2.2)
-udhcpc -i eth2.2 -p /var/run/udhcpc.eth2.2.pid -s /usr/share/udhcpc/default.script -b &
+UDHCPC_SCRIPT="/usr/share/udhcpc/default.script"
+[ ! -x "$UDHCPC_SCRIPT" ] && [ -x /sbin/rc ] && UDHCPC_SCRIPT="/sbin/rc"
+udhcpc -i eth2.2 -p /var/run/udhcpc.eth2.2.pid -s "$UDHCPC_SCRIPT" -b &
 
 echo "[FerrumOS] LAN running on 192.168.1.1. WAN client started."

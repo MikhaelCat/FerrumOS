@@ -435,12 +435,12 @@ pub fn generate_singbox_config(
                 },
                 DnsServer {
                     tag: "dns-remote".into(),
-                    address: "8.8.8.8".into(),
+                    address: "tcp://8.8.8.8".into(),
                     detour: Some(proxy.tag.clone()),
                 },
                 DnsServer {
                     tag: "dns-remote-backup".into(),
-                    address: "1.1.1.1".into(),
+                    address: "tcp://1.1.1.1".into(),
                     detour: Some(proxy.tag.clone()),
                 },
             ],

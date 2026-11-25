@@ -39,6 +39,12 @@ start_zapret() {
     echo 0 > /proc/sys/net/nat/fast_nat 2>/dev/null || true
     rmmod hw_nat 2>/dev/null || true
 
+    # Restore zapret args from storage if missing in tmpfs /etc
+    mkdir -p /etc/zapret
+    if [ ! -f /etc/zapret/nfqws.args ] && [ -f /etc/storage/zapret/nfqws.args ]; then
+        cp -f /etc/storage/zapret/nfqws.args /etc/zapret/nfqws.args 2>/dev/null || true
+    fi
+
     # Kill any existing nfqws process to prevent duplicate instances on qnum 200
     killall nfqws 2>/dev/null || true
     sleep 1
@@ -74,8 +80,18 @@ start_zapret() {
 
     # Bypass remote proxy server destination IP so tunnel packets never get desynced
     if [ -f /etc/sing-box/proxy_server.txt ]; then
-        PROXY_SRV="$(cat /etc/sing-box/proxy_server.txt)"
-        [ -n "$PROXY_SRV" ] && iptables -t mangle -A ZAPRET_NFQ -d "$PROXY_SRV" -j RETURN
+        PROXY_RAW="$(cat /etc/sing-box/proxy_server.txt | tr -d ' \r\n')"
+        if [ -n "$PROXY_RAW" ]; then
+            case "$PROXY_RAW" in
+                [0-9]*.[0-9]*.[0-9]*.[0-9]*)
+                    iptables -t mangle -A ZAPRET_NFQ -d "$PROXY_RAW" -j RETURN
+                    ;;
+                *)
+                    RESOLVED_IP=$(nslookup "$PROXY_RAW" 2>/dev/null | awk '/^Address: / { print $2 }' | tail -n1)
+                    [ -n "$RESOLVED_IP" ] && iptables -t mangle -A ZAPRET_NFQ -d "$RESOLVED_IP" -j RETURN
+                    ;;
+            esac
+        fi
     fi
 
     # Pass initial TCP SYN/ClientHello packets (packets 1:6) to NFQUEUE with queue-bypass

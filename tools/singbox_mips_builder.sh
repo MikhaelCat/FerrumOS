@@ -45,7 +45,7 @@ go build -v -trimpath \
 
 if command -v upx >/dev/null 2>&1; then
     echo "Compressing sing-box with UPX..."
-    upx -9 --force-overwrite -o "${BIN_DIR}/sing-box-packed" "${BIN_DIR}/sing-box-mips" || true
+    # upx -9 --force-overwrite -o "${BIN_DIR}/sing-box-packed" "${BIN_DIR}/sing-box-mips" || true
 fi
 
 echo "Sing-box minimal MIPS binary ready in ${BIN_DIR}"

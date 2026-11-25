@@ -53,9 +53,54 @@ cp "${ROOT_DIR}/init/S30zapret" "${WORK_DIR}/romfs/etc_ro/init.d/S30zapret"
 cp "${ROOT_DIR}/init/S40singbox" "${WORK_DIR}/romfs/etc_ro/init.d/S40singbox"
 chmod +x "${WORK_DIR}/romfs/etc_ro/init.d/"*
 
-# Patch dev_init.sh so that /etc/init.d is symlinked to /etc_ro/init.d after tmpfs mount
-# and Dropbear SSH is started early with root:root credentials
-sed -i '/mount -t tmpfs tmpfs \/etc/a \ln -sf /etc_ro/init.d /etc/init.d\n/etc/init.d/S15ssh start &' "${WORK_DIR}/romfs/sbin/dev_init.sh"
+# Patch dev_init.sh:
+# 1. Expand /tmp tmpfs from 24M to 48M so 24MB sing-box can be downloaded/extracted in RAM without ENOSPC
+sed -i 's/size_tmp="24M"/size_tmp="48M"/g' "${WORK_DIR}/romfs/sbin/dev_init.sh"
+
+# 2. Symlink /etc/init.d and start SSH and Ferrum-Core web daemon early
+sed -i '/mount -t tmpfs tmpfs \/etc/a \ln -sf /etc_ro/init.d /etc/init.d\n/etc/init.d/S15ssh start &\n/etc/init.d/S20ferrum start &' "${WORK_DIR}/romfs/sbin/dev_init.sh"
+
+# Install robust udhcpc callback script for automatic WAN DHCP IP, gateway and DNS resolution
+mkdir -p "${WORK_DIR}/romfs/usr/share/udhcpc"
+cat << 'EOF' > "${WORK_DIR}/romfs/usr/share/udhcpc/default.script"
+#!/bin/sh
+RESOLV_CONF="/etc/resolv.conf"
+
+case "$1" in
+    deconfig)
+        /sbin/ifconfig $interface 0.0.0.0
+        ;;
+    renew|bound)
+        /sbin/ifconfig $interface $ip netmask ${subnet:-255.255.255.0} ${broadcast:+broadcast $broadcast}
+
+        if [ -n "$router" ]; then
+            while /sbin/route del default gw 0.0.0.0 dev $interface 2>/dev/null; do :; done
+            for i in $router; do
+                /sbin/route add default gw $i dev $interface
+            done
+        fi
+
+        echo -n > /tmp/resolv.conf.wan
+        for i in $dns; do
+            echo "nameserver $i" >> /tmp/resolv.conf.wan
+        done
+
+        if [ -f /tmp/dnsmasq.servers ]; then
+            for i in $dns; do
+                if ! grep -q "server=$i" /tmp/dnsmasq.servers 2>/dev/null; then
+                    echo "server=$i" >> /tmp/dnsmasq.servers
+                fi
+            done
+            killall -SIGHUP dnsmasq 2>/dev/null || true
+        else
+            cp -f /tmp/resolv.conf.wan $RESOLV_CONF 2>/dev/null || true
+        fi
+        ;;
+esac
+
+exit 0
+EOF
+chmod +x "${WORK_DIR}/romfs/usr/share/udhcpc/default.script"
 
 # Ensure mtd_storage.sh starts SSH, Zapret, and restores Sing-Box on firewall reload
 sed -i 's|/usr/bin/run_zapret.sh start &|/etc/init.d/S15ssh start \&\n/etc/init.d/S30zapret start \&\n[ -f /var/run/sing-box.pid ] \&\& /etc/init.d/S40singbox restart \&|g' "${WORK_DIR}/romfs/sbin/mtd_storage.sh"

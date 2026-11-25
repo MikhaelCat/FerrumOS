@@ -26,6 +26,11 @@ flush_proxy_rules() {
     # 2. Remove DNS DNAT redirection rules
     while iptables -t nat -D PREROUTING -i br0 -p udp --dport 53 ! -d 192.168.1.1 -j DNAT --to-destination 192.168.1.1:53 2>/dev/null; do :; done
     while iptables -t nat -D PREROUTING -i br0 -p tcp --dport 53 ! -d 192.168.1.1 -j DNAT --to-destination 192.168.1.1:53 2>/dev/null; do :; done
+    LAN_IP=$(ip -4 addr show br0 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -n1)
+    if [ -n "$LAN_IP" ] && [ "$LAN_IP" != "192.168.1.1" ]; then
+        while iptables -t nat -D PREROUTING -i br0 -p udp --dport 53 ! -d "$LAN_IP" -j DNAT --to-destination "$LAN_IP":53 2>/dev/null; do :; done
+        while iptables -t nat -D PREROUTING -i br0 -p tcp --dport 53 ! -d "$LAN_IP" -j DNAT --to-destination "$LAN_IP":53 2>/dev/null; do :; done
+    fi
     while iptables -t nat -D PREROUTING -i br0 -p udp --dport 53 -j DNAT --to-destination 172.19.0.1:53 2>/dev/null; do :; done
     while iptables -t nat -D PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to-destination 172.19.0.1:53 2>/dev/null; do :; done
 
@@ -52,31 +57,56 @@ flush_proxy_rules() {
 }
 
 start_singbox() {
+    # 1. Restore config from persistent storage if missing in tmpfs /etc
+    mkdir -p /etc/sing-box
+    if [ ! -f "$CONFIG" ] && [ -f /etc/storage/sing-box/config.json ]; then
+        echo "[FerrumOS] Restoring sing-box config from /etc/storage/sing-box/..."
+        cp -f /etc/storage/sing-box/* /etc/sing-box/ 2>/dev/null || true
+    fi
+
+    # 2. Never allow large binary files in /etc/storage (MTD 64KB limit)
+    rm -f /etc/storage/sing-box /etc/storage/sing-box.gz /etc/storage/sing-box.tar.gz 2>/dev/null || true
+
     if [ ! -f "$CONFIG" ]; then
         echo "[FerrumOS] No sing-box config found at $CONFIG. Skipping."
         exit 0
     fi
 
-    # Check if sing-box binary is available
-    if [ ! -x "$BIN" ]; then
-        # Check if compressed core archive exists in /etc/storage or /etc_ro
-        if [ -f /etc/storage/sing-box.gz ]; then
-            echo "[FerrumOS] Decompressing sing-box from /etc/storage/sing-box.gz to /tmp/sing-box..."
-            gzip -dc /etc/storage/sing-box.gz > /tmp/sing-box
+    # 3. Check if binary is a valid ELF executable
+    is_valid_elf() {
+        [ -f "$1" ] && [ "$(head -c 4 "$1" 2>/dev/null)" = "$(printf '\177ELF')" ]
+    }
+
+    if [ -f /tmp/sing-box ] && ! is_valid_elf /tmp/sing-box; then
+        echo "[FerrumOS] Warning: /tmp/sing-box is not a valid ELF binary, removing..."
+        rm -f /tmp/sing-box
+    fi
+
+    if [ ! -x "$BIN" ] || ! is_valid_elf "$BIN"; then
+        if [ -f /tmp/sing-box.gz ]; then
+            echo "[FerrumOS] Decompressing sing-box from /tmp/sing-box.gz..."
+            gzip -dc /tmp/sing-box.gz > /tmp/sing-box
             chmod +x /tmp/sing-box
             BIN="/tmp/sing-box"
         elif [ -f /etc_ro/sing-box.gz ]; then
-            echo "[FerrumOS] Decompressing sing-box from /etc_ro/sing-box.gz to /tmp/sing-box..."
+            echo "[FerrumOS] Decompressing sing-box from /etc_ro/sing-box.gz..."
             gzip -dc /etc_ro/sing-box.gz > /tmp/sing-box
             chmod +x /tmp/sing-box
             BIN="/tmp/sing-box"
         fi
     fi
 
-    if [ ! -x "$BIN" ]; then
-        echo "[FerrumOS] Sing-Box binary not found at $BIN. Flushing rules and stopping."
+    if [ ! -x "$BIN" ] || ! is_valid_elf "$BIN"; then
+        echo "[FerrumOS] Sing-Box binary not valid or missing at $BIN. Flushing rules and stopping."
         flush_proxy_rules
         exit 1
+    fi
+
+    # 4. Check system clock for TLS / Reality validity
+    YEAR=$(date +%Y 2>/dev/null || echo 1970)
+    if [ "$YEAR" -lt 2024 ]; then
+        echo "[FerrumOS] System clock is out of sync ($YEAR). Attempting NTP sync for TLS Reality..."
+        ntpd -q -p pool.ntp.org -p time.google.com 2>/dev/null || true
     fi
 
     echo "[FerrumOS] Starting Sing-Box tunnel daemon with transparent LAN routing..."
@@ -138,13 +168,23 @@ start_singbox() {
 
         # Bypass remote proxy server destination IP so sing-box outbound packets never loop
         if [ -f /etc/sing-box/proxy_server.txt ]; then
-            SRV_IP="$(cat /etc/sing-box/proxy_server.txt)"
-            [ -n "$SRV_IP" ] && iptables -t mangle -A FERRUM_PROXY -d "$SRV_IP" -j RETURN
+            SRV_RAW="$(cat /etc/sing-box/proxy_server.txt | tr -d ' \r\n')"
+            if [ -n "$SRV_RAW" ]; then
+                case "$SRV_RAW" in
+                    [0-9]*.[0-9]*.[0-9]*.[0-9]*)
+                        iptables -t mangle -A FERRUM_PROXY -d "$SRV_RAW" -j RETURN
+                        ;;
+                    *)
+                        RESOLVED_IP=$(nslookup "$SRV_RAW" 2>/dev/null | awk '/^Address: / { print $2 }' | tail -n1)
+                        [ -n "$RESOLVED_IP" ] && iptables -t mangle -A FERRUM_PROXY -d "$RESOLVED_IP" -j RETURN
+                        ;;
+                esac
+            fi
         fi
 
         # CRITICAL: Bypass client VPNs from phones and PCs so they are NEVER intercepted or broken!
-        # Covers WireGuard, IPsec IKE/ESP/AH, OpenVPN UDP, Tailscale, ZeroTier, STUN
-        iptables -t mangle -A FERRUM_PROXY -p udp -m multiport --dports 500,1194,1701,4500,51820,41641,9993,3478 -j RETURN
+        # Covers Hysteria 2 / QUIC (443), WireGuard (51820), IPsec IKE/ESP/AH, OpenVPN UDP, Tailscale, ZeroTier, STUN
+        iptables -t mangle -A FERRUM_PROXY -p udp -m multiport --dports 443,500,1194,1701,4500,51820,41641,9993,3478 -j RETURN
         iptables -t mangle -A FERRUM_PROXY -p 50 -j RETURN
         iptables -t mangle -A FERRUM_PROXY -p 51 -j RETURN
         iptables -t mangle -A FERRUM_PROXY -p 47 -j RETURN
@@ -189,9 +229,11 @@ start_singbox() {
         echo "server=127.0.0.1#5353" >> /tmp/dnsmasq.servers
         killall -SIGHUP dnsmasq 2>/dev/null || true
 
-        # Redirect any hardcoded DNS from LAN clients to the router Dnsmasq on 192.168.1.1:53
-        iptables -t nat -A PREROUTING -i br0 -p udp --dport 53 ! -d 192.168.1.1 -j DNAT --to-destination 192.168.1.1:53 2>/dev/null || true
-        iptables -t nat -A PREROUTING -i br0 -p tcp --dport 53 ! -d 192.168.1.1 -j DNAT --to-destination 192.168.1.1:53 2>/dev/null || true
+        # Redirect any hardcoded DNS from LAN clients to the router Dnsmasq on LAN_IP:53
+        LAN_IP=$(ip -4 addr show br0 2>/dev/null | awk '/inet / {print $2}' | cut -d/ -f1 | head -n1)
+        [ -z "$LAN_IP" ] && LAN_IP="192.168.1.1"
+        iptables -t nat -A PREROUTING -i br0 -p udp --dport 53 ! -d "$LAN_IP" -j DNAT --to-destination "$LAN_IP":53 2>/dev/null || true
+        iptables -t nat -A PREROUTING -i br0 -p tcp --dport 53 ! -d "$LAN_IP" -j DNAT --to-destination "$LAN_IP":53 2>/dev/null || true
 
         echo "[FerrumOS] Sing-box running (PID $(cat "$PIDFILE")) with full LAN transparent proxying via tun0."
     else

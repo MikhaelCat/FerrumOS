@@ -3,6 +3,7 @@ target/
 core/target/
 bin/*
 !bin/sing-box
+!bin/sing-box.gz
 build_tmp/
 release/
 *.trx
