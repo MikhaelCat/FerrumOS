@@ -1,6 +1,8 @@
 #!/bin/sh
 # FerrumOS Sing-Box Runner & Transparent Proxy Routing Service
 # Routes LAN client traffic through VLESS / Hysteria 2 tunnel (tun0)
+# Preserves all client VPN protocols (Hysteria 2, WireGuard, IPsec, OpenVPN)
+# Seamlessly integrates with Dnsmasq for unpoisoned DNS resolution
 
 CONFIG="/etc/sing-box/config.json"
 BIN="/usr/bin/sing-box"
@@ -10,24 +12,41 @@ TABLE=100
 FWMARK="0x100"
 
 flush_proxy_rules() {
-    # Remove DNS DNAT redirection
+    # 1. Restore DNS upstream in Dnsmasq
+    if [ -f /tmp/dnsmasq.servers ]; then
+        sed -i '/127\.0\.0\.1#5353/d' /tmp/dnsmasq.servers 2>/dev/null || true
+        # If empty, add default fast unblocked DNS
+        if [ ! -s /tmp/dnsmasq.servers ]; then
+            echo "server=77.88.8.8" > /tmp/dnsmasq.servers
+            echo "server=77.88.8.1" >> /tmp/dnsmasq.servers
+        fi
+        killall -SIGHUP dnsmasq 2>/dev/null || true
+    fi
+
+    # 2. Remove DNS DNAT redirection rules
+    while iptables -t nat -D PREROUTING -i br0 -p udp --dport 53 ! -d 192.168.1.1 -j DNAT --to-destination 192.168.1.1:53 2>/dev/null; do :; done
+    while iptables -t nat -D PREROUTING -i br0 -p tcp --dport 53 ! -d 192.168.1.1 -j DNAT --to-destination 192.168.1.1:53 2>/dev/null; do :; done
     while iptables -t nat -D PREROUTING -i br0 -p udp --dport 53 -j DNAT --to-destination 172.19.0.1:53 2>/dev/null; do :; done
     while iptables -t nat -D PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to-destination 172.19.0.1:53 2>/dev/null; do :; done
 
-    # Remove iptables mangle rules
+    # 3. Remove iptables mangle proxy chain
     while iptables -t mangle -D PREROUTING -i br0 -j FERRUM_PROXY 2>/dev/null; do :; done
     iptables -t mangle -F FERRUM_PROXY 2>/dev/null || true
     iptables -t mangle -X FERRUM_PROXY 2>/dev/null || true
 
-    # Remove FORWARD rules for tun0
+    # 4. Remove FORWARD rules for tun0
     while iptables -D FORWARD -i br0 -o tun0 -j ACCEPT 2>/dev/null; do :; done
+    while iptables -D FORWARD -i tun0 -o br0 -j ACCEPT 2>/dev/null; do :; done
     while iptables -D FORWARD -i tun0 -o br0 -m state --state RELATED,ESTABLISHED -j ACCEPT 2>/dev/null; do :; done
     while iptables -D FORWARD -o tun0 -j ACCEPT 2>/dev/null; do :; done
 
-    # Remove NAT masquerade for tun0
+    # 5. Remove any legacy NAT masquerade for tun0
     while iptables -t nat -D POSTROUTING -o tun0 -j MASQUERADE 2>/dev/null; do :; done
 
-    # Remove ip rules and route table 100
+    # 6. Remove TCPMSS clamping on tun0
+    while iptables -t mangle -D FORWARD -o tun0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null; do :; done
+
+    # 7. Remove ip rules and route table 100
     while ip rule del fwmark $FWMARK table $TABLE 2>/dev/null; do :; done
     ip route flush table $TABLE 2>/dev/null || true
 }
@@ -68,11 +87,20 @@ start_singbox() {
     # Clean old routing and firewall rules
     flush_proxy_rules
 
+    # Disable hardware NAT / PPE offload bypass so Netfilter sees 100% of packets
+    echo 0 > /proc/sys/net/nat/fast_nat 2>/dev/null || true
+    rmmod hw_nat 2>/dev/null || true
+
     # Configure Linux kernel parameters for transparent routing
     sysctl -w net.ipv4.ip_forward=1 2>/dev/null || true
-    sysctl -w net.ipv4.conf.all.rp_filter=2 2>/dev/null || sysctl -w net.ipv4.conf.all.rp_filter=0 2>/dev/null || true
-    sysctl -w net.ipv4.conf.default.rp_filter=2 2>/dev/null || sysctl -w net.ipv4.conf.default.rp_filter=0 2>/dev/null || true
-    sysctl -w net.ipv4.conf.br0.rp_filter=2 2>/dev/null || sysctl -w net.ipv4.conf.br0.rp_filter=0 2>/dev/null || true
+    sysctl -w net.ipv4.conf.all.rp_filter=0 2>/dev/null || true
+    sysctl -w net.ipv4.conf.default.rp_filter=0 2>/dev/null || true
+    sysctl -w net.ipv4.conf.br0.rp_filter=0 2>/dev/null || true
+
+    # Disable IPv6 forwarding to prevent dual-stack IPv6 TSPU blackholes
+    sysctl -w net.ipv6.conf.all.disable_ipv6=1 2>/dev/null || true
+    sysctl -w net.ipv6.conf.default.disable_ipv6=1 2>/dev/null || true
+    ip6tables -P FORWARD DROP 2>/dev/null || true
 
     # Limit memory usage for Go runtime on 64MB RAM router
     export GOMEMLIMIT=16MiB
@@ -93,7 +121,7 @@ start_singbox() {
     done
 
     if [ "$TUN_READY" = "1" ]; then
-        sysctl -w net.ipv4.conf.tun0.rp_filter=2 2>/dev/null || sysctl -w net.ipv4.conf.tun0.rp_filter=0 2>/dev/null || true
+        sysctl -w net.ipv4.conf.tun0.rp_filter=0 2>/dev/null || true
 
         # Set up routing table 100 for tun0
         ip route replace default dev tun0 table $TABLE
@@ -101,6 +129,8 @@ start_singbox() {
 
         # Create FERRUM_PROXY chain in mangle table
         iptables -t mangle -N FERRUM_PROXY 2>/dev/null || iptables -t mangle -F FERRUM_PROXY
+
+        # Bypass loopback and private subnets
         iptables -t mangle -A FERRUM_PROXY -d 127.0.0.0/8 -j RETURN
         iptables -t mangle -A FERRUM_PROXY -d 192.168.0.0/16 -j RETURN
         iptables -t mangle -A FERRUM_PROXY -d 10.0.0.0/8 -j RETURN
@@ -112,17 +142,18 @@ start_singbox() {
             [ -n "$SRV_IP" ] && iptables -t mangle -A FERRUM_PROXY -d "$SRV_IP" -j RETURN
         fi
 
-        # CRITICAL: Never intercept client UDP VPNs (Hysteria 2, QUIC, WireGuard, IPsec, OpenVPN)!
-        # Return ALL UDP traffic except port 53 (DNS)
-        iptables -t mangle -A FERRUM_PROXY -p udp ! --dport 53 -j RETURN
-
-        # Bypass VPN IP protocols (ESP, AH, GRE)
+        # CRITICAL: Bypass client VPNs from phones and PCs so they are NEVER intercepted or broken!
+        # Covers WireGuard, IPsec IKE/ESP/AH, OpenVPN UDP, Tailscale, ZeroTier, STUN
+        iptables -t mangle -A FERRUM_PROXY -p udp -m multiport --dports 500,1194,1701,4500,51820,41641,9993,3478 -j RETURN
         iptables -t mangle -A FERRUM_PROXY -p 50 -j RETURN
         iptables -t mangle -A FERRUM_PROXY -p 51 -j RETURN
         iptables -t mangle -A FERRUM_PROXY -p 47 -j RETURN
-
-        # Bypass SSH, OpenVPN TCP, PPTP TCP
         iptables -t mangle -A FERRUM_PROXY -p tcp -m multiport --dports 22,1194,1723 -j RETURN
+
+        # ALWAYS route all Telegram DC IPs to tun0 so mobile Telegram connects instantly
+        for tg_net in 91.108.0.0/16 149.154.160.0/20 185.76.151.0/24; do
+            iptables -t mangle -A FERRUM_PROXY -d "$tg_net" -j MARK --set-xmark $FWMARK/$FWMARK
+        done
 
         # Check routing mode (smart_ru vs global)
         MODE="smart_ru"
@@ -136,30 +167,31 @@ start_singbox() {
             # Smart RU: mark Web traffic (ports 80, 443) for sing-box rule matching/sniffing
             iptables -t mangle -A FERRUM_PROXY -p tcp -m multiport --dports 80,443 -j MARK --set-xmark $FWMARK/$FWMARK
         else
-            # Global: mark all TCP
+            # Global: mark all TCP and non-VPN UDP for full tunnel routing
             iptables -t mangle -A FERRUM_PROXY -p tcp -j MARK --set-xmark $FWMARK/$FWMARK
+            iptables -t mangle -A FERRUM_PROXY -p udp -j MARK --set-xmark $FWMARK/$FWMARK
         fi
 
-        # Route DNS (UDP 53) to sing-box tun0 for unpoisoned resolution
-        iptables -t mangle -A FERRUM_PROXY -p udp --dport 53 -j MARK --set-xmark $FWMARK/$FWMARK
-
-        # Transparently redirect LAN DNS queries (even if targeted at 192.168.1.1) to sing-box tun0
-        iptables -t nat -I PREROUTING -i br0 -p udp --dport 53 -j DNAT --to-destination 172.19.0.1:53 2>/dev/null || true
-        iptables -t nat -I PREROUTING -i br0 -p tcp --dport 53 -j DNAT --to-destination 172.19.0.1:53 2>/dev/null || true
-
-        # Hook into PREROUTING for LAN bridge
+        # Hook FERRUM_PROXY into PREROUTING for LAN bridge
         iptables -t mangle -I PREROUTING -i br0 -j FERRUM_PROXY
 
-        # Allow forwarding between LAN (br0) and TUN (tun0)
+        # Allow forwarding between LAN (br0) and TUN (tun0) - preserve real client IPs
         iptables -I FORWARD -i br0 -o tun0 -j ACCEPT
-        iptables -I FORWARD -i tun0 -o br0 -m state --state RELATED,ESTABLISHED -j ACCEPT
+        iptables -I FORWARD -i tun0 -o br0 -j ACCEPT
         iptables -I FORWARD -o tun0 -j ACCEPT
-
-        # NAT Masquerade on tun0
-        iptables -t nat -I POSTROUTING -o tun0 -j MASQUERADE
 
         # Clamp MSS on tun0 to avoid fragmentation black holes on encapsulated packets
         iptables -t mangle -I FORWARD -o tun0 -p tcp --tcp-flags SYN,RST SYN -j TCPMSS --clamp-mss-to-pmtu 2>/dev/null || true
+
+        # Connect Dnsmasq to Sing-box direct DNS inbound on 127.0.0.1:5353
+        # Sing-box will detour blocked domains through the tunnel and resolve Russian domains directly
+        sed -i '/127\.0\.0\.1#5353/d' /tmp/dnsmasq.servers 2>/dev/null || true
+        echo "server=127.0.0.1#5353" >> /tmp/dnsmasq.servers
+        killall -SIGHUP dnsmasq 2>/dev/null || true
+
+        # Redirect any hardcoded DNS from LAN clients to the router Dnsmasq on 192.168.1.1:53
+        iptables -t nat -A PREROUTING -i br0 -p udp --dport 53 ! -d 192.168.1.1 -j DNAT --to-destination 192.168.1.1:53 2>/dev/null || true
+        iptables -t nat -A PREROUTING -i br0 -p tcp --dport 53 ! -d 192.168.1.1 -j DNAT --to-destination 192.168.1.1:53 2>/dev/null || true
 
         echo "[FerrumOS] Sing-box running (PID $(cat "$PIDFILE")) with full LAN transparent proxying via tun0."
     else

@@ -57,8 +57,8 @@ chmod +x "${WORK_DIR}/romfs/etc_ro/init.d/"*
 # and Dropbear SSH is started early with root:root credentials
 sed -i '/mount -t tmpfs tmpfs \/etc/a \ln -sf /etc_ro/init.d /etc/init.d\n/etc/init.d/S15ssh start &' "${WORK_DIR}/romfs/sbin/dev_init.sh"
 
-# Ensure mtd_storage.sh starts SSH and zapret in default started_script.sh
-sed -i 's|/usr/bin/run_zapret.sh start &|/etc/init.d/S15ssh start \&\n/etc/init.d/S30zapret start \&|g' "${WORK_DIR}/romfs/sbin/mtd_storage.sh"
+# Ensure mtd_storage.sh starts SSH, Zapret, and restores Sing-Box on firewall reload
+sed -i 's|/usr/bin/run_zapret.sh start &|/etc/init.d/S15ssh start \&\n/etc/init.d/S30zapret start \&\n[ -f /var/run/sing-box.pid ] \&\& /etc/init.d/S40singbox restart \&|g' "${WORK_DIR}/romfs/sbin/mtd_storage.sh"
 
 # Neutralize legacy run_zapret.sh so rc / started_script never injects UDP 443 REJECT
 cat << 'EOF' > "${WORK_DIR}/romfs/usr/bin/run_zapret.sh"

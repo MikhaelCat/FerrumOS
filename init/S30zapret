@@ -30,8 +30,14 @@ flush_zapret_rules() {
 start_zapret() {
     echo "[FerrumOS] Starting Zapret NFQWS DPI bypass..."
 
-    # Ensure NFQUEUE kernel module is loaded
+    # Ensure required Netfilter modules are loaded
     modprobe xt_NFQUEUE 2>/dev/null || true
+    modprobe xt_connbytes 2>/dev/null || true
+    modprobe xt_multiport 2>/dev/null || true
+
+    # Disable hardware NAT offload bypass so Netfilter NFQUEUE sees packets 1:6
+    echo 0 > /proc/sys/net/nat/fast_nat 2>/dev/null || true
+    rmmod hw_nat 2>/dev/null || true
 
     # Kill any existing nfqws process to prevent duplicate instances on qnum 200
     killall nfqws 2>/dev/null || true
@@ -120,7 +126,6 @@ start_zapret() {
     $NFQWS $ARGS --pidfile=/var/run/nfqws.pid --daemon
 
     echo "[FerrumOS] Zapret active: YouTube 4K and Discord voice unblocked without dropping UDP 443 / Hysteria."
-}
 }
 
 stop_zapret() {

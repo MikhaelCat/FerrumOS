@@ -1545,11 +1545,14 @@ pub fn apply_flow_offload(cfg: &FlowOffloadConfig) -> Result<(), String> {
     let _ = Command::new("iptables")
         .args(["-D", "FORWARD", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "FLOWOFFLOAD"])
         .output();
+    let _ = Command::new("iptables")
+        .args(["-D", "FORWARD", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-m", "mark", "!", "--mark", "0x100/0x100", "-j", "FLOWOFFLOAD"])
+        .output();
 
     if cfg.software_flow_offload {
         let _ = fs::write("/proc/sys/net/netfilter/nf_conntrack_tcp_be_liberal", "1");
         let _ = Command::new("iptables")
-            .args(["-I", "FORWARD", "1", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-j", "FLOWOFFLOAD"])
+            .args(["-I", "FORWARD", "1", "-m", "conntrack", "--ctstate", "RELATED,ESTABLISHED", "-m", "mark", "!", "--mark", "0x100/0x100", "-j", "FLOWOFFLOAD"])
             .output();
     }
 

@@ -60,9 +60,19 @@ pub struct InboundConfig {
     pub inbound_type: String,
     pub tag: String,
     #[serde(skip_serializing_if = "Option::is_none")]
+    pub listen: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub listen_port: Option<u16>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub network: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub interface_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub address: Vec<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub inet4_address: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub mtu: Option<u32>,
     pub auto_route: bool,
     pub strict_route: bool,
     #[serde(default)]
@@ -197,6 +207,10 @@ pub struct RouteConfig {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RouteRule {
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub inbound: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub port: Vec<u16>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub protocol: Vec<String>,
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub ip_is_private: bool,
@@ -208,6 +222,7 @@ pub struct RouteRule {
 }
 
 pub const TELEGRAM_IPS: &[&str] = &[
+    "91.108.0.0/16",
     "91.108.4.0/22",
     "91.108.8.0/22",
     "91.108.12.0/22",
@@ -228,12 +243,17 @@ pub const RU_BLOCKED_DOMAINS: &[&str] = &[
     "telegram.me",
     "telesco.pe",
     "tdesktop.com",
+    "telegra.ph",
+    "stel.com",
     // Discord
     "discord.com",
     "discord.gg",
     "discordapp.com",
     "discordapp.net",
     "discord.media",
+    "discord.co",
+    "discordcdn.com",
+    "discordstatus.com",
     // YouTube & Google CDN
     "youtube.com",
     "youtu.be",
@@ -241,11 +261,19 @@ pub const RU_BLOCKED_DOMAINS: &[&str] = &[
     "ytimg.com",
     "youtube-nocookie.com",
     "ggpht.com",
+    "gvt1.com",
+    "gvt2.com",
+    "googleapis.com",
+    "googleusercontent.com",
+    "wide-youtube.l.google.com",
+    "yt.be",
     // Meta / Instagram / Facebook
     "instagram.com",
     "cdninstagram.com",
     "facebook.com",
     "fbcdn.net",
+    "fb.com",
+    "messenger.com",
     // Twitter / X
     "twitter.com",
     "x.com",
@@ -256,6 +284,10 @@ pub const RU_BLOCKED_DOMAINS: &[&str] = &[
     "chatgpt.com",
     "anthropic.com",
     "claude.ai",
+    // Encrypted Messengers & Email
+    "signal.org",
+    "proton.me",
+    "protonmail.com",
     // Tech & Community
     "rutracker.org",
     "ntc.party",
@@ -274,8 +306,21 @@ pub fn generate_singbox_config(
 
     let mut rules = Vec::new();
 
-    // Rule 1: DNS to dns-out
+    // Rule 1: DNS Inbound from Dnsmasq on 127.0.0.1:5353 to dns-out
     rules.push(RouteRule {
+        inbound: vec!["dns-in".into()],
+        port: Vec::new(),
+        protocol: Vec::new(),
+        ip_is_private: false,
+        domain_suffix: Vec::new(),
+        ip_cidr: Vec::new(),
+        outbound: "dns-out".into(),
+    });
+
+    // Rule 2: Sniffed DNS or destination port 53 to dns-out
+    rules.push(RouteRule {
+        inbound: Vec::new(),
+        port: vec![53],
         protocol: vec!["dns".into()],
         ip_is_private: false,
         domain_suffix: Vec::new(),
@@ -283,8 +328,10 @@ pub fn generate_singbox_config(
         outbound: "dns-out".into(),
     });
 
-    // Rule 2: Private LAN IPs stay direct
+    // Rule 3: Private LAN IPs stay direct
     rules.push(RouteRule {
+        inbound: Vec::new(),
+        port: Vec::new(),
         protocol: Vec::new(),
         ip_is_private: true,
         domain_suffix: Vec::new(),
@@ -299,6 +346,8 @@ pub fn generate_singbox_config(
         RoutingMode::Custom => {
             if !custom_domains.is_empty() {
                 rules.push(RouteRule {
+                    inbound: Vec::new(),
+                    port: Vec::new(),
                     protocol: Vec::new(),
                     ip_is_private: false,
                     domain_suffix: custom_domains.to_vec(),
@@ -308,6 +357,8 @@ pub fn generate_singbox_config(
             }
             if !custom_ips.is_empty() {
                 rules.push(RouteRule {
+                    inbound: Vec::new(),
+                    port: Vec::new(),
                     protocol: Vec::new(),
                     ip_is_private: false,
                     domain_suffix: Vec::new(),
@@ -330,6 +381,8 @@ pub fn generate_singbox_config(
             all_domains.extend_from_slice(custom_domains);
 
             rules.push(RouteRule {
+                inbound: Vec::new(),
+                port: Vec::new(),
                 protocol: Vec::new(),
                 ip_is_private: false,
                 domain_suffix: all_domains.clone(),
@@ -341,6 +394,8 @@ pub fn generate_singbox_config(
             all_ips.extend_from_slice(custom_ips);
 
             rules.push(RouteRule {
+                inbound: Vec::new(),
+                port: Vec::new(),
                 protocol: Vec::new(),
                 ip_is_private: false,
                 domain_suffix: Vec::new(),
@@ -375,7 +430,7 @@ pub fn generate_singbox_config(
             servers: vec![
                 DnsServer {
                     tag: "dns-direct".into(),
-                    address: "local".into(),
+                    address: "77.88.8.8".into(),
                     detour: Some("direct".into()),
                 },
                 DnsServer {
@@ -392,18 +447,42 @@ pub fn generate_singbox_config(
             rules: final_dns_rules,
             final_server: final_dns,
         },
-        inbounds: vec![InboundConfig {
-            inbound_type: "tun".into(),
-            tag: "tun-in".into(),
-            interface_name: Some("tun0".into()),
-            inet4_address: Some("172.19.0.1/30".into()),
-            auto_route: false,
-            strict_route: false,
-            auto_redirect: false,
-            stack: Some("system".into()), // lowest memory overhead
-            sniff: true,
-            sniff_override_destination: true,
-        }],
+        inbounds: vec![
+            InboundConfig {
+                inbound_type: "direct".into(),
+                tag: "dns-in".into(),
+                listen: Some("127.0.0.1".into()),
+                listen_port: Some(5353),
+                network: Some("udp".into()),
+                interface_name: None,
+                address: Vec::new(),
+                inet4_address: None,
+                mtu: None,
+                auto_route: false,
+                strict_route: false,
+                auto_redirect: false,
+                stack: None,
+                sniff: false,
+                sniff_override_destination: false,
+            },
+            InboundConfig {
+                inbound_type: "tun".into(),
+                tag: "tun-in".into(),
+                listen: None,
+                listen_port: None,
+                network: None,
+                interface_name: Some("tun0".into()),
+                address: vec!["172.19.0.1/30".into()],
+                inet4_address: None,
+                mtu: Some(1420),
+                auto_route: false,
+                strict_route: false,
+                auto_redirect: false,
+                stack: Some("gvisor".into()),
+                sniff: true,
+                sniff_override_destination: true,
+            },
+        ],
         outbounds: vec![
             proxy_outbound,
             OutboundConfig {

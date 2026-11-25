@@ -351,7 +351,7 @@ fn install_singbox_core(url: Option<&str>) -> Result<String, String> {
     let mut download_success = false;
     for target_url in urls_to_try {
         let output = std::process::Command::new("wget")
-            .args(["-q", "-T", "35", "-O", "/tmp/sing-box.download", target_url])
+            .args(["--no-check-certificate", "-q", "-T", "35", "-O", "/tmp/sing-box.download", target_url])
             .output();
 
         if let Ok(out) = output {
@@ -1330,6 +1330,9 @@ pub fn handle_request(mut request: Request, state: &AppState) {
             let url_opt = req.ok().and_then(|r| r.url);
             match install_singbox_core(url_opt.as_deref()) {
                 Ok(msg) => {
+                    if *state.proxy_enabled.lock().unwrap() {
+                        let _ = std::process::Command::new("/etc/init.d/S40singbox").arg("restart").output();
+                    }
                     let resp = GenericResp { success: true, message: msg };
                     respond_json(request, &resp, cors_header, content_type_json);
                 }
@@ -1355,6 +1358,9 @@ pub fn handle_request(mut request: Request, state: &AppState) {
 
             match upload_singbox_core(&body_bytes) {
                 Ok(sz) => {
+                    if *state.proxy_enabled.lock().unwrap() {
+                        let _ = std::process::Command::new("/etc/init.d/S40singbox").arg("restart").output();
+                    }
                     let resp = CoreUploadResp {
                         success: true,
                         message: format!("Исполняемое ядро Sing-Box успешно сохранено в RAM (/tmp/sing-box, {} байт)", sz),
